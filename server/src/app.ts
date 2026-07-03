@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import { calendarRouter } from "./routes/calendar.js";
 
 export function createApp(): Express {
   const app = express();
@@ -9,6 +10,8 @@ export function createApp(): Express {
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+
+  app.use(calendarRouter);
 
   return app;
 }
