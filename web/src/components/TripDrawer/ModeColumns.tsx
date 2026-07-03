@@ -36,11 +36,9 @@ export function ModeColumns({
         />
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           {data.international.map((pick) => (
-            <DestinationCard
-              key={pick.destination.id}
-              pick={pick}
-              onOpen={onOpenDestination}
-            />
+            <div key={pick.destination.id} className="animate-fade-up">
+              <DestinationCard pick={pick} onOpen={onOpenDestination} />
+            </div>
           ))}
         </div>
       </div>
@@ -59,11 +57,9 @@ export function ModeColumns({
           />
           <div className="mt-3 space-y-4">
             {data.india[mode].slice(0, 1).map((pick) => (
-              <DestinationCard
-                key={pick.destination.id}
-                pick={pick}
-                onOpen={onOpenDestination}
-              />
+              <div key={pick.destination.id} className="animate-fade-up">
+                <DestinationCard pick={pick} onOpen={onOpenDestination} />
+              </div>
             ))}
           </div>
         </div>

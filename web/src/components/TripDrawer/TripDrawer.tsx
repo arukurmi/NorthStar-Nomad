@@ -5,6 +5,7 @@ import { useRecommendations } from "../../hooks/useRecommendations";
 import type { Recommendations, Scope, TravelMode } from "../../lib/types";
 import { ModeColumns } from "./ModeColumns";
 import { DestinationDetail } from "./DestinationDetail";
+import { ColumnsSkeleton } from "./CardSkeleton";
 
 /** 0-based calendar months covered by an ISO date range. */
 function coveredMonths(start: string, end: string): number[] {
@@ -152,14 +153,22 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
                   Couldn't load picks — check the server and try again.
                 </p>
               ) : loading && !data ? (
-                <p className="text-muted">Reading the stars…</p>
+                <ColumnsSkeleton />
               ) : rotated ? (
-                <ModeColumns
-                  data={rotated}
-                  scope={scope}
-                  onRefreshMode={refreshMode}
-                  onOpenDestination={setOpenDestination}
-                />
+                <>
+                  {rotated.shoulderSeason && (
+                    <p className="mb-4 rounded-xl bg-raise p-3 text-sm text-marigold">
+                      ✦ Shoulder season for these dates — these are still the
+                      best picks, just not at their peak.
+                    </p>
+                  )}
+                  <ModeColumns
+                    data={rotated}
+                    scope={scope}
+                    onRefreshMode={refreshMode}
+                    onOpenDestination={setOpenDestination}
+                  />
+                </>
               ) : null}
             </div>
           </div>
