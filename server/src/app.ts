@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import { calendarRouter } from "./routes/calendar.js";
+import { recommendationsRouter } from "./routes/recommendations.js";
 
 export function createApp(): Express {
   const app = express();
@@ -12,6 +13,7 @@ export function createApp(): Express {
   });
 
   app.use(calendarRouter);
+  app.use(recommendationsRouter);
 
   return app;
 }
