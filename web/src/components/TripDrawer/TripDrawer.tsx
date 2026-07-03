@@ -1,7 +1,9 @@
+import { useState } from "react";
 import type { SelectedRange } from "../../lib/selection";
 import { formatRange } from "../../lib/selection";
 import { useRecommendations } from "../../hooks/useRecommendations";
-import { DestinationCard } from "./DestinationCard";
+import type { Scope } from "../../lib/types";
+import { ModeColumns } from "./ModeColumns";
 
 interface TripDrawerProps {
   range: SelectedRange | null;
@@ -9,12 +11,13 @@ interface TripDrawerProps {
 }
 
 export function TripDrawer({ range, onClose }: TripDrawerProps) {
-  const { data } = useRecommendations(
+  const [scope, setScope] = useState<Scope>("india");
+  const { data, loading, error } = useRecommendations(
     range?.start ?? null,
     range?.end ?? null,
     0,
   );
-  const topPick = data?.india.flight[0] ?? null;
+
   return (
     <>
       {range && (
@@ -26,7 +29,7 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
       )}
       <aside
         aria-hidden={!range}
-        className={`fixed inset-y-0 right-0 z-50 w-full max-w-2xl transform overflow-y-auto bg-deep shadow-drawer transition-transform duration-300 ease-out ${
+        className={`fixed inset-y-0 right-0 z-50 w-full max-w-3xl transform overflow-y-auto bg-deep shadow-drawer transition-transform duration-300 ease-out ${
           range ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -50,12 +53,32 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
               </button>
             </div>
 
-            <div className="mt-8 max-w-sm">
-              {topPick ? (
-                <DestinationCard pick={topPick} />
-              ) : (
-                <p className="text-muted">Finding your picks…</p>
-              )}
+            <div className="mt-6 inline-flex rounded-full bg-ink p-1 font-numeric text-xs uppercase tracking-wide">
+              {(["india", "international"] as Scope[]).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setScope(s)}
+                  className={`rounded-full px-4 py-1.5 transition ${
+                    scope === s
+                      ? "bg-marigold font-bold text-ink"
+                      : "text-muted hover:text-starlight"
+                  }`}
+                >
+                  {s === "india" ? "India" : "International"}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6">
+              {error ? (
+                <p className="text-rose">
+                  Couldn't load picks — check the server and try again.
+                </p>
+              ) : loading && !data ? (
+                <p className="text-muted">Reading the stars…</p>
+              ) : data ? (
+                <ModeColumns data={data} scope={scope} />
+              ) : null}
             </div>
           </div>
         )}
