@@ -11,6 +11,7 @@ interface MonthGridProps {
   month: number;
   calendar: CalendarMonth | null;
   highlightIso?: string | null;
+  onSelectDay?: (iso: string) => void;
 }
 
 function longWeekendFor(
@@ -25,6 +26,7 @@ export function MonthGrid({
   month,
   calendar,
   highlightIso,
+  onSelectDay,
 }: MonthGridProps) {
   const weeks = monthMatrix(year, month);
   const today = todayIso();
@@ -63,13 +65,15 @@ export function MonthGrid({
           const connectsRight = lw && cell.iso < lw.end;
 
           return (
-            <div
+            <button
               key={cell.iso}
-              className={`relative aspect-square rounded-xl p-1.5 sm:aspect-[4/3] sm:p-2 ${base} ${
+              disabled={!cell.inMonth}
+              onClick={() => onSelectDay?.(cell.iso)}
+              className={`relative aspect-square rounded-xl p-1.5 text-left transition sm:aspect-[4/3] sm:p-2 ${base} ${
                 cell.iso === highlightIso
                   ? "ring-2 ring-marigold shadow-star"
                   : ""
-              }`}
+              } ${cell.inMonth ? "cursor-pointer hover:ring-1 hover:ring-sky/60" : ""}`}
             >
               <div className="flex items-start justify-between">
                 <span
@@ -120,7 +124,7 @@ export function MonthGrid({
                   className="absolute -right-1.5 top-1/2 hidden w-3 -translate-y-1/2 border-t border-dotted border-marigold/70 sm:block"
                 />
               )}
-            </div>
+            </button>
           );
         })}
       </div>

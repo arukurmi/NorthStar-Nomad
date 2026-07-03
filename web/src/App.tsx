@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { MonthGrid } from "./components/Calendar/MonthGrid";
 import { MonthNav } from "./components/Calendar/MonthNav";
+import { TripDrawer } from "./components/TripDrawer/TripDrawer";
 import { useCalendarMonth } from "./hooks/useCalendarMonth";
 import { addDays, dayOfWeek, todayIso } from "./lib/dates";
+import { rangeForDay, type SelectedRange } from "./lib/selection";
 
 /** ISO date of the upcoming Saturday (today if it is one). */
 export function nextSaturday(fromIso: string): string {
@@ -16,6 +18,7 @@ export default function App() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [highlightIso, setHighlightIso] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SelectedRange | null>(null);
   const { data, loading, error, reload } = useCalendarMonth(year, month);
 
   const changeMonth = useCallback((y: number, m: number) => {
@@ -32,7 +35,9 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") {
+      if (e.key === "Escape") {
+        setSelected(null);
+      } else if (e.key === "ArrowLeft") {
         changeMonth(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
       } else if (e.key === "ArrowRight") {
         changeMonth(
@@ -93,10 +98,13 @@ export default function App() {
               month={month}
               calendar={data}
               highlightIso={highlightIso}
+              onSelectDay={(iso) => setSelected(rangeForDay(iso, data))}
             />
           </div>
         )}
       </main>
+
+      <TripDrawer range={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }
