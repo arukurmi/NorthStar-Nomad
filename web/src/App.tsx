@@ -1,4 +1,7 @@
+import { MonthGrid } from "./components/Calendar/MonthGrid";
+
 export default function App() {
+  const now = new Date();
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-8">
       <header className="flex items-baseline justify-between">
@@ -18,8 +21,8 @@ export default function App() {
         </p>
       </header>
 
-      <main className="mt-8 grid min-h-[50vh] place-items-center rounded-card bg-deep/60 text-muted">
-        Calendar arrives in the next phase.
+      <main className="mt-8">
+        <MonthGrid year={now.getFullYear()} month={now.getMonth() + 1} />
       </main>
     </div>
   );
