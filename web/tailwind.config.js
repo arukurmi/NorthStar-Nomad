@@ -40,11 +40,38 @@ export default {
           "0%": { opacity: "0", transform: "translateX(-32px)" },
           "100%": { opacity: "1", transform: "translateX(0)" },
         },
+        twinkle: {
+          "0%, 100%": { opacity: "0.25", transform: "scale(0.85)" },
+          "50%": { opacity: "1", transform: "scale(1.15)" },
+        },
+        drift: {
+          "0%": { transform: "translate(-8%, -4%) rotate(0deg)" },
+          "50%": { transform: "translate(6%, 5%) rotate(18deg)" },
+          "100%": { transform: "translate(-8%, -4%) rotate(0deg)" },
+        },
+        starPulse: {
+          "0%, 100%": {
+            textShadow: "0 0 18px rgba(255,182,72,0.9)",
+            transform: "scale(1)",
+          },
+          "50%": {
+            textShadow: "0 0 42px rgba(255,182,72,1)",
+            transform: "scale(1.12)",
+          },
+        },
+        constellationDraw: {
+          "0%": { width: "0" },
+          "100%": { width: "100%" },
+        },
       },
       animation: {
         "fade-up": "fadeUp 0.35s ease-out both",
         "slide-from-right": "slideFromRight 0.3s ease-out both",
         "slide-from-left": "slideFromLeft 0.3s ease-out both",
+        twinkle: "twinkle 3.2s ease-in-out infinite",
+        drift: "drift 24s ease-in-out infinite",
+        "star-pulse": "starPulse 4s ease-in-out infinite",
+        "constellation-draw": "constellationDraw 1.4s ease-out 1.2s both",
       },
     },
   },
