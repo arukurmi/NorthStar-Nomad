@@ -1,3 +1,28 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-ink text-starlight font-body antialiased;
+  }
+  body {
+    /* Faint star-field: two layered radial dot grids, no images. */
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(238, 241, 255, 0.07) 1px, transparent 0),
+      radial-gradient(circle at 3px 7px, rgba(238, 241, 255, 0.04) 1px, transparent 0);
+    background-size:
+      140px 140px,
+      90px 90px;
+    min-height: 100vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
