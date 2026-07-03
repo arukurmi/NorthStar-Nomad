@@ -1,5 +1,7 @@
 import type { SelectedRange } from "../../lib/selection";
 import { formatRange } from "../../lib/selection";
+import { useRecommendations } from "../../hooks/useRecommendations";
+import { DestinationCard } from "./DestinationCard";
 
 interface TripDrawerProps {
   range: SelectedRange | null;
@@ -7,6 +9,12 @@ interface TripDrawerProps {
 }
 
 export function TripDrawer({ range, onClose }: TripDrawerProps) {
+  const { data } = useRecommendations(
+    range?.start ?? null,
+    range?.end ?? null,
+    0,
+  );
+  const topPick = data?.india.flight[0] ?? null;
   return (
     <>
       {range && (
@@ -42,9 +50,13 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
               </button>
             </div>
 
-            <p className="mt-8 text-muted">
-              Trip picks arrive in the next phase.
-            </p>
+            <div className="mt-8 max-w-sm">
+              {topPick ? (
+                <DestinationCard pick={topPick} />
+              ) : (
+                <p className="text-muted">Finding your picks…</p>
+              )}
+            </div>
           </div>
         )}
       </aside>
