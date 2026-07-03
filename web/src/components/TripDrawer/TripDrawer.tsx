@@ -4,6 +4,19 @@ import { formatRange } from "../../lib/selection";
 import { useRecommendations } from "../../hooks/useRecommendations";
 import type { Recommendations, Scope, TravelMode } from "../../lib/types";
 import { ModeColumns } from "./ModeColumns";
+import { DestinationDetail } from "./DestinationDetail";
+
+/** 0-based calendar months covered by an ISO date range. */
+function coveredMonths(start: string, end: string): number[] {
+  const months = new Set<number>();
+  const c = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  while (c <= e) {
+    months.add(c.getUTCMonth());
+    c.setUTCDate(c.getUTCDate() + 1);
+  }
+  return [...months];
+}
 
 interface TripDrawerProps {
   range: SelectedRange | null;
@@ -44,6 +57,7 @@ function applySeeds(
 export function TripDrawer({ range, onClose }: TripDrawerProps) {
   const [scope, setScope] = useState<Scope>("india");
   const [seeds, setSeeds] = useState(ZERO_SEEDS);
+  const [openDestination, setOpenDestination] = useState<string | null>(null);
   const { data, loading, error } = useRecommendations(
     range?.start ?? null,
     range?.end ?? null,
@@ -52,6 +66,7 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
 
   useEffect(() => {
     setSeeds(ZERO_SEEDS);
+    setOpenDestination(null);
   }, [range?.start, range?.end]);
 
   const refreshMode = (key: SeedKey) =>
@@ -126,7 +141,13 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
             </div>
 
             <div className="mt-6">
-              {error ? (
+              {openDestination ? (
+                <DestinationDetail
+                  id={openDestination}
+                  activeMonths={coveredMonths(range.start, range.end)}
+                  onBack={() => setOpenDestination(null)}
+                />
+              ) : error ? (
                 <p className="text-rose">
                   Couldn't load picks — check the server and try again.
                 </p>
@@ -137,6 +158,7 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
                   data={rotated}
                   scope={scope}
                   onRefreshMode={refreshMode}
+                  onOpenDestination={setOpenDestination}
                 />
               ) : null}
             </div>
