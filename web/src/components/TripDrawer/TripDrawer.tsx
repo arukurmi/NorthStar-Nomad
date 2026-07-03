@@ -80,13 +80,21 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
 
   const refreshMode = (key: SeedKey) =>
     setSeeds((s) => ({ ...s, [key]: s[key] + 1 }));
-  const shuffleAll = () =>
+  const shuffleAll = () => {
+    // Always land back on the picks grid, even from a detail view.
+    setOpenDestination(null);
     setSeeds((s) => ({
       flight: s.flight + 1,
       bike: s.bike + 1,
       bus: s.bus + 1,
       international: s.international + 1,
     }));
+  };
+  const switchScope = (s: Scope) => {
+    setScope(s);
+    // Leaving a destination detail open here hid the picks — reset it.
+    setOpenDestination(null);
+  };
 
   const rotated = data ? applySeeds(data, seeds) : null;
 
@@ -137,7 +145,7 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
               {(["india", "international"] as Scope[]).map((s) => (
                 <button
                   key={s}
-                  onClick={() => setScope(s)}
+                  onClick={() => switchScope(s)}
                   className={`rounded-full px-4 py-1.5 transition ${
                     scope === s
                       ? "bg-marigold font-bold text-ink"
@@ -157,11 +165,13 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
 
             <div className="mt-6">
               {openDestination ? (
-                <DestinationDetail
-                  id={openDestination}
-                  activeMonths={coveredMonths(range.start, range.end)}
-                  onBack={() => setOpenDestination(null)}
-                />
+                <div className="animate-fade-up">
+                  <DestinationDetail
+                    id={openDestination}
+                    activeMonths={coveredMonths(range.start, range.end)}
+                    onBack={() => setOpenDestination(null)}
+                  />
+                </div>
               ) : error ? (
                 <p className="text-rose">
                   Couldn't load picks — check the server and try again.

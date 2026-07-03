@@ -60,13 +60,20 @@ export default function App() {
     setCityPickerOpen(false);
   };
 
-  const changeMonth = useCallback((y: number, m: number) => {
-    setYear(y);
-    setMonth(m);
-  }, []);
+  const [slideDir, setSlideDir] = useState<"left" | "right">("right");
+
+  const changeMonth = useCallback(
+    (y: number, m: number) => {
+      setSlideDir(y * 12 + m > year * 12 + month ? "right" : "left");
+      setYear(y);
+      setMonth(m);
+    },
+    [year, month],
+  );
 
   const jumpToNextWeekend = useCallback(() => {
     const sat = nextSaturday(todayIso());
+    setSlideDir("right");
     setYear(Number(sat.slice(0, 4)));
     setMonth(Number(sat.slice(5, 7)));
     setHighlightIso(sat);
@@ -220,7 +227,14 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className={loading && !data ? "animate-pulse opacity-50" : ""}>
+          <div
+            key={`${year}-${month}`}
+            className={`${
+              slideDir === "right"
+                ? "animate-slide-from-right"
+                : "animate-slide-from-left"
+            } ${loading && !data ? "animate-pulse opacity-50" : ""}`}
+          >
             <MonthGrid
               year={year}
               month={month}

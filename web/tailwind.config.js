@@ -32,9 +32,19 @@ export default {
           "0%": { opacity: "0", transform: "translateY(8px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        slideFromRight: {
+          "0%": { opacity: "0", transform: "translateX(32px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
+        slideFromLeft: {
+          "0%": { opacity: "0", transform: "translateX(-32px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
       },
       animation: {
         "fade-up": "fadeUp 0.35s ease-out both",
+        "slide-from-right": "slideFromRight 0.3s ease-out both",
+        "slide-from-left": "slideFromLeft 0.3s ease-out both",
       },
     },
   },
