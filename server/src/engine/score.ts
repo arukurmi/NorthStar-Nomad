@@ -23,11 +23,13 @@ function monthWeights(start: Date, end: Date): Map<number, number> {
  * Score a destination for a date range. Higher is better.
  * Weather fit (0–10, dominant) + trip-length fit − distance penalty
  * for trips too short to justify the journey.
+ * `distanceKm` is the road distance from the user's home city.
  */
 export function scoreDestination(
   dest: Destination,
   start: Date,
   end: Date,
+  distanceKm: number,
 ): number {
   const days = tripDays(start, end);
 
@@ -42,7 +44,7 @@ export function scoreDestination(
   // Short trips to far places hurt; a 2-day trip to a 2000 km place
   // loses up to ~2.5 points, a long trip loses almost nothing.
   const distancePenalty =
-    (dest.distanceKm / 1000) * Math.max(0, 1 - days / dest.idealDays);
+    (distanceKm / 1000) * Math.max(0, 1 - days / dest.idealDays);
 
   return weatherFit * lengthFit - distancePenalty;
 }

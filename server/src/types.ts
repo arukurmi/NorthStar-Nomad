@@ -14,9 +14,10 @@ export interface Destination {
   region: string;
   country: string;
   scope: Scope;
-  modes: TravelMode[];
-  /** Road distance from HOME_BASE in km (approx; flight-only picks use air-ish distance). */
-  distanceKm: number;
+  /** [lat, lng] — distances are computed from the user's home city. */
+  coords: [number, number];
+  /** Whether this is a good ride/drive destination at all (roads, terrain). */
+  roadTrip: boolean;
   /** Minimum days the trip really needs. */
   idealDays: number;
   /** Jan..Dec fit score, 0–10. Encodes monsoon, heat, snow, peak season. */

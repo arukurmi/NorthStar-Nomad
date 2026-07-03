@@ -22,17 +22,27 @@ export interface Teaser {
   emoji: string;
 }
 
-function bestTeaser(start: Date, end: Date): Teaser {
-  const r = recommend(start, end);
+function bestTeaser(
+  start: Date,
+  end: Date,
+  cityId: string | undefined,
+  variety: number,
+): Teaser {
+  const r = recommend(start, end, { cityId });
   const candidates: { mode: TravelMode; score: number; name: string }[] = [];
   for (const mode of ["flight", "bike", "bus"] as TravelMode[]) {
-    const top = r.india[mode][0];
-    if (top) {
-      candidates.push({ mode, score: top.score, name: top.destination.name });
+    for (const pick of r.india[mode]) {
+      candidates.push({
+        mode,
+        score: pick.score,
+        name: pick.destination.name,
+      });
     }
   }
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
+  // Rotate through the top few so a month of Saturdays isn't one destination.
+  const top = candidates.slice(0, Math.min(4, candidates.length));
+  const best = top[variety % top.length];
   return { name: best.name, mode: best.mode, emoji: MODE_EMOJI[best.mode] };
 }
 
@@ -41,6 +51,8 @@ export const calendarRouter = Router();
 calendarRouter.get("/api/calendar/:year/:month", (req, res) => {
   const year = Number(req.params.year);
   const month = Number(req.params.month);
+  const cityId =
+    typeof req.query.city === "string" ? req.query.city : undefined;
   if (
     !Number.isInteger(year) ||
     !Number.isInteger(month) ||
@@ -82,10 +94,13 @@ calendarRouter.get("/api/calendar/:year/:month", (req, res) => {
 
   // Teasers: one per long weekend, plus one per plain Sat–Sun weekend.
   const teasers: Record<string, Teaser> = {};
+  let weekendIndex = 0;
   for (const lw of longWeekends) {
     teasers[lw.start] = bestTeaser(
       new Date(`${lw.start}T00:00:00Z`),
       new Date(`${lw.end}T00:00:00Z`),
+      cityId,
+      weekendIndex++,
     );
   }
   for (const day of days) {
@@ -93,7 +108,7 @@ calendarRouter.get("/api/calendar/:year/:month", (req, res) => {
     if (date.getUTCDay() === 6 && !coveredByLongWeekend.has(day.date)) {
       const sunday = new Date(date);
       sunday.setUTCDate(sunday.getUTCDate() + 1);
-      teasers[day.date] = bestTeaser(date, sunday);
+      teasers[day.date] = bestTeaser(date, sunday, cityId, weekendIndex++);
     }
   }
 

@@ -16,9 +16,12 @@ describe("destination dataset invariants", () => {
     (_id, d) => {
       expect(d.monthScores).toHaveLength(12);
       expect(d.weather).toHaveLength(12);
-      expect(d.modes.length).toBeGreaterThan(0);
       expect(d.idealDays).toBeGreaterThan(0);
-      expect(d.distanceKm).toBeGreaterThan(0);
+      expect(d.coords).toHaveLength(2);
+      expect(d.coords[0]).toBeGreaterThanOrEqual(-90);
+      expect(d.coords[0]).toBeLessThanOrEqual(90);
+      expect(d.coords[1]).toBeGreaterThanOrEqual(-180);
+      expect(d.coords[1]).toBeLessThanOrEqual(180);
       for (const s of d.monthScores) {
         expect(s).toBeGreaterThanOrEqual(0);
         expect(s).toBeLessThanOrEqual(10);
@@ -30,18 +33,10 @@ describe("destination dataset invariants", () => {
     },
   );
 
-  it("bike/bus destinations are within road-trip range", () => {
-    for (const d of allDestinations) {
-      if (d.modes.includes("bus") || d.modes.includes("bike")) {
-        expect(d.distanceKm).toBeLessThanOrEqual(1100);
-      }
-    }
-  });
-
-  it("international destinations are flight-only", () => {
+  it("international destinations are never road trips", () => {
     for (const d of allDestinations) {
       if (d.scope === "international") {
-        expect(d.modes).toEqual(["flight"]);
+        expect(d.roadTrip).toBe(false);
       }
     }
   });
