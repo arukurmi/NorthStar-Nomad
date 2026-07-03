@@ -1,13 +1,49 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MonthGrid } from "./components/Calendar/MonthGrid";
+import { MonthNav } from "./components/Calendar/MonthNav";
 import { useCalendarMonth } from "./hooks/useCalendarMonth";
-import { MONTH_NAMES } from "./lib/dates";
+import { addDays, dayOfWeek, todayIso } from "./lib/dates";
+
+/** ISO date of the upcoming Saturday (today if it is one). */
+export function nextSaturday(fromIso: string): string {
+  const dow = dayOfWeek(fromIso); // 0 Sun … 6 Sat
+  const delta = dow === 6 ? 0 : (6 - dow + 7) % 7;
+  return addDays(fromIso, delta);
+}
 
 export default function App() {
   const now = new Date();
-  const [year] = useState(now.getFullYear());
-  const [month] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [highlightIso, setHighlightIso] = useState<string | null>(null);
   const { data, loading, error, reload } = useCalendarMonth(year, month);
+
+  const changeMonth = useCallback((y: number, m: number) => {
+    setYear(y);
+    setMonth(m);
+  }, []);
+
+  const jumpToNextWeekend = useCallback(() => {
+    const sat = nextSaturday(todayIso());
+    setYear(Number(sat.slice(0, 4)));
+    setMonth(Number(sat.slice(5, 7)));
+    setHighlightIso(sat);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") {
+        changeMonth(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
+      } else if (e.key === "ArrowRight") {
+        changeMonth(
+          month === 12 ? year + 1 : year,
+          month === 12 ? 1 : month + 1,
+        );
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [year, month, changeMonth]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-8">
@@ -29,15 +65,19 @@ export default function App() {
       </header>
 
       <main className="mt-8">
-        <h2 className="mb-4 font-display text-2xl font-semibold">
-          {MONTH_NAMES[month - 1]}{" "}
-          <span className="font-numeric text-muted">{year}</span>
-        </h2>
+        <MonthNav
+          year={year}
+          month={month}
+          onChange={changeMonth}
+          onJumpToNextWeekend={jumpToNextWeekend}
+        />
 
         {error ? (
           <div className="grid min-h-[40vh] place-items-center rounded-card bg-deep/60">
             <div className="text-center">
-              <p className="text-muted">The night sky is unreachable — is the server running?</p>
+              <p className="text-muted">
+                The night sky is unreachable — is the server running?
+              </p>
               <button
                 onClick={reload}
                 className="mt-3 rounded-full bg-marigold px-4 py-1.5 font-semibold text-ink"
@@ -48,7 +88,12 @@ export default function App() {
           </div>
         ) : (
           <div className={loading && !data ? "animate-pulse opacity-50" : ""}>
-            <MonthGrid year={year} month={month} calendar={data} />
+            <MonthGrid
+              year={year}
+              month={month}
+              calendar={data}
+              highlightIso={highlightIso}
+            />
           </div>
         )}
       </main>

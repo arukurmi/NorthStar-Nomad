@@ -10,6 +10,7 @@ interface MonthGridProps {
   year: number;
   month: number;
   calendar: CalendarMonth | null;
+  highlightIso?: string | null;
 }
 
 function longWeekendFor(
@@ -19,7 +20,12 @@ function longWeekendFor(
   return longWeekends.find((lw) => iso >= lw.start && iso <= lw.end);
 }
 
-export function MonthGrid({ year, month, calendar }: MonthGridProps) {
+export function MonthGrid({
+  year,
+  month,
+  calendar,
+  highlightIso,
+}: MonthGridProps) {
   const weeks = monthMatrix(year, month);
   const today = todayIso();
   const dayInfo = new Map(calendar?.days.map((d) => [d.date, d]) ?? []);
@@ -59,7 +65,11 @@ export function MonthGrid({ year, month, calendar }: MonthGridProps) {
           return (
             <div
               key={cell.iso}
-              className={`relative aspect-square rounded-xl p-1.5 sm:aspect-[4/3] sm:p-2 ${base}`}
+              className={`relative aspect-square rounded-xl p-1.5 sm:aspect-[4/3] sm:p-2 ${base} ${
+                cell.iso === highlightIso
+                  ? "ring-2 ring-marigold shadow-star"
+                  : ""
+              }`}
             >
               <div className="flex items-start justify-between">
                 <span
