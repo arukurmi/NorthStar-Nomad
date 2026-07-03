@@ -37,4 +37,12 @@ describe("destination dataset invariants", () => {
       }
     }
   });
+
+  it("international destinations are flight-only", () => {
+    for (const d of allDestinations) {
+      if (d.scope === "international") {
+        expect(d.modes).toEqual(["flight"]);
+      }
+    }
+  });
 });
