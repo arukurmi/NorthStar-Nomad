@@ -15,7 +15,7 @@ const MODES: TravelMode[] = ["flight", "bike", "bus"];
 interface ModeColumnsProps {
   data: Recommendations;
   scope: "india" | "international";
-  onOpenDestination?: (id: string) => void;
+  onOpenDestination?: (id: string, mode: TravelMode) => void;
   onRefreshMode?: (mode: TravelMode | "international") => void;
 }
 
@@ -42,7 +42,10 @@ export function ModeColumns({
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           {data.international.map((pick) => (
             <div key={pick.destination.id} className="animate-fade-up">
-              <DestinationCard pick={pick} onOpen={onOpenDestination} />
+              <DestinationCard
+                pick={pick}
+                onOpen={(id) => onOpenDestination?.(id, "flight")}
+              />
             </div>
           ))}
         </div>
@@ -68,7 +71,10 @@ export function ModeColumns({
           <div className="mt-3 space-y-4">
             {data.india[mode].slice(0, 1).map((pick) => (
               <div key={pick.destination.id} className="animate-fade-up">
-                <DestinationCard pick={pick} onOpen={onOpenDestination} />
+                <DestinationCard
+                  pick={pick}
+                  onOpen={(id) => onOpenDestination?.(id, mode)}
+                />
               </div>
             ))}
           </div>

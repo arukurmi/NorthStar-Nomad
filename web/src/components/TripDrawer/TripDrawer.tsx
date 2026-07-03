@@ -63,7 +63,10 @@ function applySeeds(
 export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
   const [scope, setScope] = useState<Scope>("india");
   const [seeds, setSeeds] = useState(ZERO_SEEDS);
-  const [openDestination, setOpenDestination] = useState<string | null>(null);
+  const [openDestination, setOpenDestination] = useState<{
+    id: string;
+    mode: TravelMode;
+  } | null>(null);
   const [filters, setFilters] = useState<TripFilters>(NO_FILTERS);
   const { data, loading, error } = useRecommendations(
     range?.start ?? null,
@@ -167,7 +170,9 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
               {openDestination ? (
                 <div className="animate-fade-up">
                   <DestinationDetail
-                    id={openDestination}
+                    id={openDestination.id}
+                    mode={openDestination.mode}
+                    range={{ start: range.start, end: range.end }}
                     activeMonths={coveredMonths(range.start, range.end)}
                     onBack={() => setOpenDestination(null)}
                   />
@@ -190,7 +195,9 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
                     data={rotated}
                     scope={scope}
                     onRefreshMode={refreshMode}
-                    onOpenDestination={setOpenDestination}
+                    onOpenDestination={(id, mode) =>
+                      setOpenDestination({ id, mode })
+                    }
                   />
                 </>
               ) : null}

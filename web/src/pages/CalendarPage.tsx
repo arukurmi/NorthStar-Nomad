@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { MonthGrid } from "../components/Calendar/MonthGrid";
 import { MonthNav } from "../components/Calendar/MonthNav";
 import { TripDrawer } from "../components/TripDrawer/TripDrawer";
+import { CheckInPrompt } from "../components/CheckInPrompt";
 import { useCalendarMonth } from "../hooks/useCalendarMonth";
 import { addDays, dayOfWeek, todayIso } from "../lib/dates";
 import { rangeForDay, type SelectedRange } from "../lib/selection";
@@ -197,6 +198,8 @@ export function CalendarPage({ city }: CalendarPageProps) {
         cityId={city?.id ?? "delhi-ncr"}
         onClose={() => setSelected(null)}
       />
+
+      <CheckInPrompt />
     </main>
   );
 }
