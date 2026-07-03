@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: northstar-nomad
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build --workspace=web
+    startCommand: npm run start --workspace=server
+    healthCheckPath: /api/health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_VERSION
+        value: "20"
