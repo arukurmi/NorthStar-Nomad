@@ -32,6 +32,9 @@ export default function App() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [highlightIso, setHighlightIso] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedRange | null>(null);
+  const [rangeMode, setRangeMode] = useState(false);
+  const [draftStart, setDraftStart] = useState<string | null>(null);
+  const [hoverIso, setHoverIso] = useState<string | null>(null);
   const [city, setCity] = useState<City | null>(loadStoredCity);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const { data, loading, error, reload } = useCalendarMonth(
@@ -58,10 +61,51 @@ export default function App() {
     setHighlightIso(sat);
   }, []);
 
+  const tripDayCount = (start: string, end: string) =>
+    Math.round(
+      (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) /
+        86_400_000,
+    ) + 1;
+
+  const openRange = useCallback((start: string, end: string) => {
+    const days = tripDayCount(start, end);
+    setSelected({ start, end, label: `${days}-day trip` });
+    setRangeMode(false);
+    setDraftStart(null);
+  }, []);
+
+  const handleSelectDay = (iso: string) => {
+    if (!rangeMode) {
+      setSelected(rangeForDay(iso, data));
+      return;
+    }
+    if (!draftStart) {
+      setDraftStart(iso);
+      return;
+    }
+    const [start, end] = draftStart <= iso ? [draftStart, iso] : [iso, draftStart];
+    openRange(start, end);
+  };
+
+  const presetRange = (days: number) => {
+    const start = todayIso();
+    openRange(start, addDays(start, days - 1));
+  };
+
+  const rangePaint = selected
+    ? { start: selected.start, end: selected.end }
+    : rangeMode && draftStart
+      ? draftStart <= (hoverIso ?? draftStart)
+        ? { start: draftStart, end: hoverIso ?? draftStart }
+        : { start: hoverIso ?? draftStart, end: draftStart }
+      : null;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSelected(null);
+        setRangeMode(false);
+        setDraftStart(null);
       } else if (e.key === "ArrowLeft") {
         changeMonth(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
       } else if (e.key === "ArrowRight") {
@@ -105,6 +149,42 @@ export default function App() {
           onJumpToNextWeekend={jumpToNextWeekend}
         />
 
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => {
+              setRangeMode((m) => !m);
+              setDraftStart(null);
+              setSelected(null);
+            }}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium ring-1 transition ${
+              rangeMode
+                ? "bg-sky text-ink ring-sky"
+                : "bg-sky/10 text-sky ring-sky/40 hover:bg-sky/20"
+            }`}
+          >
+            🎯 Pick a date range
+          </button>
+          <button
+            onClick={() => presetRange(10)}
+            className="rounded-full bg-jade/10 px-3 py-1.5 text-sm font-medium text-jade ring-1 ring-jade/40 transition hover:bg-jade/20"
+          >
+            ⚡ Next 10 days
+          </button>
+          <button
+            onClick={() => presetRange(14)}
+            className="rounded-full bg-jade/10 px-3 py-1.5 text-sm font-medium text-jade ring-1 ring-jade/40 transition hover:bg-jade/20"
+          >
+            🗓️ Next 2 weeks
+          </button>
+          {rangeMode && (
+            <span className="animate-fade-up text-sm text-sky">
+              {draftStart
+                ? "Now click your last day →"
+                : "Click your first day…"}
+            </span>
+          )}
+        </div>
+
         {error ? (
           <div className="grid min-h-[40vh] place-items-center rounded-card bg-deep/60">
             <div className="text-center">
@@ -126,7 +206,10 @@ export default function App() {
               month={month}
               calendar={data}
               highlightIso={highlightIso}
-              onSelectDay={(iso) => setSelected(rangeForDay(iso, data))}
+              rangePaint={rangePaint}
+              rangeMode={rangeMode}
+              onSelectDay={handleSelectDay}
+              onHoverDay={setHoverIso}
             />
           </div>
         )}
