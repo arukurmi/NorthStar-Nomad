@@ -6,6 +6,8 @@ import type { Recommendations, Scope, TravelMode } from "../../lib/types";
 import { ModeColumns } from "./ModeColumns";
 import { DestinationDetail } from "./DestinationDetail";
 import { ColumnsSkeleton } from "./CardSkeleton";
+import { FilterBar } from "./FilterBar";
+import type { TripFilters } from "../../lib/types";
 
 /** 0-based calendar months covered by an ISO date range. */
 function coveredMonths(start: string, end: string): number[] {
@@ -25,7 +27,7 @@ interface TripDrawerProps {
   onClose: () => void;
 }
 
-const NO_FILTERS = { budget: null, vibes: [] as string[] };
+const NO_FILTERS: TripFilters = { budget: null, vibes: [] };
 
 type SeedKey = TravelMode | "international";
 
@@ -62,16 +64,18 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
   const [scope, setScope] = useState<Scope>("india");
   const [seeds, setSeeds] = useState(ZERO_SEEDS);
   const [openDestination, setOpenDestination] = useState<string | null>(null);
+  const [filters, setFilters] = useState<TripFilters>(NO_FILTERS);
   const { data, loading, error } = useRecommendations(
     range?.start ?? null,
     range?.end ?? null,
     cityId,
-    NO_FILTERS,
+    filters,
   );
 
   useEffect(() => {
     setSeeds(ZERO_SEEDS);
     setOpenDestination(null);
+    setFilters(NO_FILTERS);
   }, [range?.start, range?.end]);
 
   const refreshMode = (key: SeedKey) =>
@@ -144,6 +148,12 @@ export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
                 </button>
               ))}
             </div>
+
+            {!openDestination && (
+              <div className="mt-5">
+                <FilterBar filters={filters} onChange={setFilters} />
+              </div>
+            )}
 
             <div className="mt-6">
               {openDestination ? (

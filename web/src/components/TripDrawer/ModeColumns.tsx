@@ -34,6 +34,11 @@ export function ModeColumns({
           color="text-sky"
           onRefresh={() => onRefreshMode?.("international")}
         />
+        {data.international.length === 0 && (
+          <p className="mt-3 rounded-xl bg-raise p-3 text-sm text-muted">
+            No international match for these filters — try relaxing them.
+          </p>
+        )}
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           {data.international.map((pick) => (
             <div key={pick.destination.id} className="animate-fade-up">
@@ -55,6 +60,11 @@ export function ModeColumns({
             color={MODE_META[mode].color}
             onRefresh={() => onRefreshMode?.(mode)}
           />
+          {data.india[mode].length === 0 && (
+            <p className="mt-3 rounded-xl bg-raise p-3 text-xs text-muted">
+              No {MODE_META[mode].label.toLowerCase()} match — relax filters.
+            </p>
+          )}
           <div className="mt-3 space-y-4">
             {data.india[mode].slice(0, 1).map((pick) => (
               <div key={pick.destination.id} className="animate-fade-up">
