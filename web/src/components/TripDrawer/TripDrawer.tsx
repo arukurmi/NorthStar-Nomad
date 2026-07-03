@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SelectedRange } from "../../lib/selection";
 import { formatRange } from "../../lib/selection";
 import { useRecommendations } from "../../hooks/useRecommendations";
-import type { Scope } from "../../lib/types";
+import type { Recommendations, Scope, TravelMode } from "../../lib/types";
 import { ModeColumns } from "./ModeColumns";
 
 interface TripDrawerProps {
@@ -10,13 +10,61 @@ interface TripDrawerProps {
   onClose: () => void;
 }
 
+type SeedKey = TravelMode | "international";
+
+const ZERO_SEEDS: Record<SeedKey, number> = {
+  flight: 0,
+  bike: 0,
+  bus: 0,
+  international: 0,
+};
+
+function rotatePool<T>(pool: T[], seed: number): T[] {
+  if (pool.length === 0) return pool;
+  const shift = seed % pool.length;
+  return [...pool.slice(shift), ...pool.slice(0, shift)];
+}
+
+/** Apply per-mode refresh seeds by rotating each ranked pool client-side. */
+function applySeeds(
+  data: Recommendations,
+  seeds: Record<SeedKey, number>,
+): Recommendations {
+  return {
+    ...data,
+    india: {
+      flight: rotatePool(data.india.flight, seeds.flight),
+      bike: rotatePool(data.india.bike, seeds.bike),
+      bus: rotatePool(data.india.bus, seeds.bus),
+    },
+    international: rotatePool(data.international, seeds.international),
+  };
+}
+
 export function TripDrawer({ range, onClose }: TripDrawerProps) {
   const [scope, setScope] = useState<Scope>("india");
+  const [seeds, setSeeds] = useState(ZERO_SEEDS);
   const { data, loading, error } = useRecommendations(
     range?.start ?? null,
     range?.end ?? null,
     0,
   );
+
+  useEffect(() => {
+    setSeeds(ZERO_SEEDS);
+  }, [range?.start, range?.end]);
+
+  const refreshMode = (key: SeedKey) =>
+    setSeeds((s) => ({ ...s, [key]: s[key] + 1 }));
+  const shuffleAll = () =>
+    setSeeds((s) => ({
+      flight: s.flight + 1,
+      bike: s.bike + 1,
+      bus: s.bus + 1,
+      international: s.international + 1,
+    }));
+
+  const rotated = data ? applySeeds(data, seeds) : null;
 
   return (
     <>
@@ -44,13 +92,21 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
                   {formatRange(range)}
                 </h3>
               </div>
-              <button
-                onClick={onClose}
-                aria-label="Close"
-                className="grid h-9 w-9 place-items-center rounded-full bg-raise text-muted transition hover:text-starlight"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={shuffleAll}
+                  className="rounded-full bg-raise px-3 py-1.5 text-sm text-muted transition hover:text-starlight"
+                >
+                  ↻ Shuffle all
+                </button>
+                <button
+                  onClick={onClose}
+                  aria-label="Close"
+                  className="grid h-9 w-9 place-items-center rounded-full bg-raise text-muted transition hover:text-starlight"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             <div className="mt-6 inline-flex rounded-full bg-ink p-1 font-numeric text-xs uppercase tracking-wide">
@@ -76,8 +132,12 @@ export function TripDrawer({ range, onClose }: TripDrawerProps) {
                 </p>
               ) : loading && !data ? (
                 <p className="text-muted">Reading the stars…</p>
-              ) : data ? (
-                <ModeColumns data={data} scope={scope} />
+              ) : rotated ? (
+                <ModeColumns
+                  data={rotated}
+                  scope={scope}
+                  onRefreshMode={refreshMode}
+                />
               ) : null}
             </div>
           </div>
