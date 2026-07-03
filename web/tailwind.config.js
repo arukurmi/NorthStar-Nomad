@@ -4,11 +4,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#131A33",
-        deep: "#1C2447",
-        raise: "#252E58",
-        starlight: "#EEF1FF",
-        muted: "#9AA3C7",
+        ink: "rgb(var(--c-ink) / <alpha-value>)",
+        deep: "rgb(var(--c-deep) / <alpha-value>)",
+        raise: "rgb(var(--c-raise) / <alpha-value>)",
+        starlight: "rgb(var(--c-text) / <alpha-value>)",
+        muted: "rgb(var(--c-muted) / <alpha-value>)",
         marigold: "#FFB648",
         rose: "#F4647D",
         jade: "#38D1A5",

@@ -9,6 +9,11 @@ import { rangeForDay, type SelectedRange } from "./lib/selection";
 import type { City } from "./lib/types";
 
 const CITY_STORAGE_KEY = "nomad-city";
+const THEME_STORAGE_KEY = "nomad-theme";
+
+function loadTheme(): "dark" | "light" {
+  return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+}
 
 function loadStoredCity(): City | null {
   try {
@@ -37,6 +42,12 @@ export default function App() {
   const [hoverIso, setHoverIso] = useState<string | null>(null);
   const [city, setCity] = useState<City | null>(loadStoredCity);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(loadTheme);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
   const { data, loading, error, reload } = useCalendarMonth(
     year,
     month,
@@ -133,12 +144,21 @@ export default function App() {
             Your free weekends, already planned.
           </p>
         </div>
-        <button
-          onClick={() => setCityPickerOpen(true)}
-          className="rounded-full bg-deep px-3 py-1.5 font-numeric text-xs uppercase tracking-widest text-muted ring-1 ring-raise transition hover:text-starlight"
-        >
-          {city ? `${city.emoji} ${city.name}` : "📍 Pick your city"} ▾
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCityPickerOpen(true)}
+            className="rounded-full bg-deep px-3 py-1.5 font-numeric text-xs uppercase tracking-widest text-muted ring-1 ring-raise transition hover:text-starlight"
+          >
+            {city ? `${city.emoji} ${city.name}` : "📍 Pick your city"} ▾
+          </button>
+          <button
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            className="grid h-9 w-9 place-items-center rounded-full bg-deep ring-1 ring-raise transition hover:rotate-12 hover:text-starlight"
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
       </header>
 
       <main className="mt-8">

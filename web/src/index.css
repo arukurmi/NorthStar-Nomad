@@ -3,14 +3,33 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Night sky (default): midnight indigo canvas, starlight text. */
+    --c-ink: 19 26 51;
+    --c-deep: 28 36 71;
+    --c-raise: 37 46 88;
+    --c-text: 238 241 255;
+    --c-muted: 154 163 199;
+    --star-alpha: 0.07;
+  }
+  .light {
+    /* Day sky: warm paper canvas, indigo text. Accents stay the same. */
+    --c-ink: 247 245 238;
+    --c-deep: 255 255 255;
+    --c-raise: 234 231 221;
+    --c-text: 30 35 64;
+    --c-muted: 96 103 140;
+    --star-alpha: 0;
+  }
   html {
     @apply bg-ink text-starlight font-body antialiased;
+    transition: background-color 0.4s ease, color 0.4s ease;
   }
   body {
     /* Faint star-field: two layered radial dot grids, no images. */
     background-image:
-      radial-gradient(circle at 1px 1px, rgba(238, 241, 255, 0.07) 1px, transparent 0),
-      radial-gradient(circle at 3px 7px, rgba(238, 241, 255, 0.04) 1px, transparent 0);
+      radial-gradient(circle at 1px 1px, rgb(var(--c-text) / var(--star-alpha)) 1px, transparent 0),
+      radial-gradient(circle at 3px 7px, rgb(var(--c-text) / calc(var(--star-alpha) * 0.6)) 1px, transparent 0);
     background-size:
       140px 140px,
       90px 90px;
