@@ -21,8 +21,11 @@ function coveredMonths(start: string, end: string): number[] {
 
 interface TripDrawerProps {
   range: SelectedRange | null;
+  cityId: string;
   onClose: () => void;
 }
+
+const NO_FILTERS = { budget: null, vibes: [] as string[] };
 
 type SeedKey = TravelMode | "international";
 
@@ -55,14 +58,15 @@ function applySeeds(
   };
 }
 
-export function TripDrawer({ range, onClose }: TripDrawerProps) {
+export function TripDrawer({ range, cityId, onClose }: TripDrawerProps) {
   const [scope, setScope] = useState<Scope>("india");
   const [seeds, setSeeds] = useState(ZERO_SEEDS);
   const [openDestination, setOpenDestination] = useState<string | null>(null);
   const { data, loading, error } = useRecommendations(
     range?.start ?? null,
     range?.end ?? null,
-    0,
+    cityId,
+    NO_FILTERS,
   );
 
   useEffect(() => {

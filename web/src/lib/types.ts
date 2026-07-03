@@ -14,8 +14,8 @@ export interface Destination {
   region: string;
   country: string;
   scope: Scope;
-  modes: TravelMode[];
-  distanceKm: number;
+  coords: [number, number];
+  roadTrip: boolean;
   idealDays: number;
   monthScores: number[];
   weather: MonthWeather[];
@@ -59,6 +59,8 @@ export interface Pick {
   score: number;
   whyNow: string;
   weatherNow: MonthWeather;
+  distanceKm: number;
+  modes: TravelMode[];
 }
 
 export interface Recommendations {
@@ -66,4 +68,23 @@ export interface Recommendations {
   india: Record<TravelMode, Pick[]>;
   international: Pick[];
   shoulderSeason: boolean;
+  filtered: boolean;
+}
+
+export interface City {
+  id: string;
+  name: string;
+  emoji: string;
+  coords: [number, number];
+}
+
+export interface Vibe {
+  id: string;
+  emoji: string;
+  label: string;
+}
+
+export interface TripFilters {
+  budget: BudgetTier | null;
+  vibes: string[];
 }

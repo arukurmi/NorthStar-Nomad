@@ -28,7 +28,7 @@ export function DestinationCard({ pick, onOpen }: DestinationCardProps) {
           </h4>
           <span className="shrink-0 font-numeric text-xs text-muted">
             {d.scope === "india"
-              ? `${d.distanceKm.toLocaleString("en-IN")} km`
+              ? `${pick.distanceKm.toLocaleString("en-IN")} km`
               : d.country}
           </span>
         </div>

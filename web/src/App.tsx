@@ -2,9 +2,22 @@ import { useCallback, useEffect, useState } from "react";
 import { MonthGrid } from "./components/Calendar/MonthGrid";
 import { MonthNav } from "./components/Calendar/MonthNav";
 import { TripDrawer } from "./components/TripDrawer/TripDrawer";
+import { CityPicker } from "./components/CityPicker";
 import { useCalendarMonth } from "./hooks/useCalendarMonth";
 import { addDays, dayOfWeek, todayIso } from "./lib/dates";
 import { rangeForDay, type SelectedRange } from "./lib/selection";
+import type { City } from "./lib/types";
+
+const CITY_STORAGE_KEY = "nomad-city";
+
+function loadStoredCity(): City | null {
+  try {
+    const raw = localStorage.getItem(CITY_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as City) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** ISO date of the upcoming Saturday (today if it is one). */
 export function nextSaturday(fromIso: string): string {
@@ -19,7 +32,19 @@ export default function App() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [highlightIso, setHighlightIso] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedRange | null>(null);
-  const { data, loading, error, reload } = useCalendarMonth(year, month);
+  const [city, setCity] = useState<City | null>(loadStoredCity);
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const { data, loading, error, reload } = useCalendarMonth(
+    year,
+    month,
+    city?.id ?? "delhi-ncr",
+  );
+
+  const pickCity = (c: City) => {
+    setCity(c);
+    localStorage.setItem(CITY_STORAGE_KEY, JSON.stringify(c));
+    setCityPickerOpen(false);
+  };
 
   const changeMonth = useCallback((y: number, m: number) => {
     setYear(y);
@@ -64,9 +89,12 @@ export default function App() {
             Your free weekends, already planned.
           </p>
         </div>
-        <p className="hidden font-numeric text-xs uppercase tracking-widest text-muted sm:block">
-          from Delhi-NCR
-        </p>
+        <button
+          onClick={() => setCityPickerOpen(true)}
+          className="rounded-full bg-deep px-3 py-1.5 font-numeric text-xs uppercase tracking-widest text-muted ring-1 ring-raise transition hover:text-starlight"
+        >
+          {city ? `${city.emoji} ${city.name}` : "📍 Pick your city"} ▾
+        </button>
       </header>
 
       <main className="mt-8">
@@ -104,7 +132,17 @@ export default function App() {
         )}
       </main>
 
-      <TripDrawer range={selected} onClose={() => setSelected(null)} />
+      <TripDrawer
+        range={selected}
+        cityId={city?.id ?? "delhi-ncr"}
+        onClose={() => setSelected(null)}
+      />
+
+      <CityPicker
+        open={cityPickerOpen || city === null}
+        onPick={pickCity}
+        onClose={city ? () => setCityPickerOpen(false) : undefined}
+      />
     </div>
   );
 }

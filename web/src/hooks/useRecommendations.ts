@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { fetchRecommendations } from "../lib/api";
-import type { Recommendations } from "../lib/types";
+import type { Recommendations, TripFilters } from "../lib/types";
 
 export function useRecommendations(
   start: string | null,
   end: string | null,
-  seed: number,
+  cityId: string,
+  filters: TripFilters,
 ) {
   const [data, setData] = useState<Recommendations | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const filterKey = `${filters.budget ?? ""}|${filters.vibes.join(",")}`;
 
   useEffect(() => {
     if (!start || !end) {
@@ -19,7 +21,7 @@ export function useRecommendations(
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchRecommendations(start, end, seed)
+    fetchRecommendations(start, end, cityId, filters)
       .then((d) => {
         if (!cancelled) setData(d);
       })
@@ -32,7 +34,8 @@ export function useRecommendations(
     return () => {
       cancelled = true;
     };
-  }, [start, end, seed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, end, cityId, filterKey]);
 
   return { data, loading, error };
 }

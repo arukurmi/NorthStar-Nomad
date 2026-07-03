@@ -12,6 +12,7 @@ export interface CalendarMonthState {
 export function useCalendarMonth(
   year: number,
   month: number,
+  cityId: string,
 ): CalendarMonthState {
   const [data, setData] = useState<CalendarMonth | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,7 +23,7 @@ export function useCalendarMonth(
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchCalendarMonth(year, month)
+    fetchCalendarMonth(year, month, cityId)
       .then((d) => {
         if (!cancelled) setData(d);
       })
@@ -35,7 +36,7 @@ export function useCalendarMonth(
     return () => {
       cancelled = true;
     };
-  }, [year, month, attempt]);
+  }, [year, month, cityId, attempt]);
 
   return {
     data,
