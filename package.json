@@ -1,0 +1,16 @@
+{
+  "name": "northstar-nomad",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A weather-aware travel calendar that fills your free weekends with the best flight, bike, and bus trips.",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=server & npm run dev --workspace=web",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:web": "npm run dev --workspace=web",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
