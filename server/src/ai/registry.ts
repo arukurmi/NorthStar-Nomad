@@ -4,6 +4,7 @@ import {
   type AiProvider,
   type ProviderId,
 } from "./provider.js";
+import { createAnthropicProvider } from "./providers/anthropic.js";
 import {
   createFakeProvider,
   type FakeProvider,
@@ -18,8 +19,8 @@ import {
 let providers = buildProviders();
 
 /**
- * Placeholder for a vendor adapter that has not been written yet. Phases 6-8
- * replace these entries with the real Anthropic, Gemini and OpenAI adapters.
+ * Placeholder for a vendor adapter that has not been written yet. Phases 7-8
+ * replace the two remaining entries with the real Gemini and OpenAI adapters.
  * It fails when *called*, not at module init, so the registry stays total and
  * the fake path is unaffected.
  */
@@ -38,13 +39,23 @@ function pendingAdapter(id: ProviderId): AiProvider {
   };
 }
 
+/** The real vendor adapter for an id, or a placeholder until its phase lands. */
+function realAdapter(id: ProviderId): AiProvider {
+  switch (id) {
+    case "anthropic":
+      return createAnthropicProvider();
+    default:
+      return pendingAdapter(id);
+  }
+}
+
 function buildProviders(): Record<ProviderId, AiProvider> {
   // src/test-setup.ts sets NOMAD_AI_FAKE, so the whole route suite is
   // network-free by construction rather than by remembering to stub.
   const fake = process.env.NOMAD_AI_FAKE === "1";
   const built = {} as Record<ProviderId, AiProvider>;
   for (const id of PROVIDER_IDS) {
-    built[id] = fake ? createFakeProvider(id) : pendingAdapter(id);
+    built[id] = fake ? createFakeProvider(id) : realAdapter(id);
   }
   return built;
 }
