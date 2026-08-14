@@ -5,3 +5,6 @@ dist/
 *.log
 data.sqlite
 data.sqlite-*
+
+# Agent worktrees — transient, never committed
+.claude/worktrees/

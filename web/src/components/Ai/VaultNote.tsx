@@ -12,7 +12,11 @@ export function VaultNote() {
       It's encrypted (AES-256-GCM) before it touches our database and is only
       ever decrypted in memory to make a request you asked for. It never appears
       in a response, a log, or a URL. Delete it here any time and the row is
-      gone immediately. We never make a call you didn't click.
+      gone immediately. We never make a call you didn't click.{" "}
+      <span className="text-starlight/80">
+        Deleting it here removes our copy — it does not revoke the key. To
+        retire a key for good, revoke it in your provider's console.
+      </span>
     </p>
   );
 }
