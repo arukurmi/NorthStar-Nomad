@@ -368,6 +368,85 @@ describe("keystore", () => {
     expect((await selectKey(userId))?.providerId).toBe("openai");
   });
 
+  it("refuses a row transplanted from another user", async () => {
+    // The attack: someone with write access to the database copies Alice's
+    // (ciphertext, iv, tag, salt) into Bob's row and signs in as Bob. Without
+    // the owner bound into the GCM tag, Bob's session drives Alice's key.
+    const alice = makeUser("transplant-alice@nomad.test");
+    const bob = makeUser("transplant-bob@nomad.test");
+    await saveKey({
+      userId: alice,
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+      model: "claude-sonnet-5",
+      validatedAt: "2026-08-14T10:00:00.000Z",
+      preferred: true,
+    });
+    await saveKey({
+      userId: bob,
+      provider: "anthropic",
+      apiKey: "sk-ant-api03-bobs-own-key-0123456789abc",
+      model: "claude-sonnet-5",
+      validatedAt: "2026-08-14T10:00:00.000Z",
+      preferred: true,
+    });
+
+    const stolen = blobs(alice, "anthropic");
+    db.prepare(
+      `UPDATE ai_keys SET ciphertext = ?, iv = ?, tag = ?, salt = ?, last4 = ?
+       WHERE user_id = ? AND provider = ?`,
+    ).run(
+      stolen.ciphertext,
+      stolen.iv,
+      stolen.tag,
+      stolen.salt,
+      ANTHROPIC_KEY.slice(-4),
+      bob,
+      "anthropic",
+    );
+
+    let thrown: unknown;
+    try {
+      await selectKey(bob);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(AiError);
+    expect((thrown as AiError).code).toBe("provider_error");
+    // Alice's own row still opens — the binding did not break the honest path.
+    expect((await selectKey(alice))?.apiKey).toBe(ANTHROPIC_KEY);
+  });
+
+  it("refuses a row transplanted between a user's own providers", async () => {
+    // The same attack inside one account: moving the anthropic blob into the
+    // openai row would spend an Anthropic credential on OpenAI's endpoint.
+    const userId = makeUser("transplant-provider@nomad.test");
+    await saveKey({
+      userId,
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+      model: "claude-sonnet-5",
+      validatedAt: "2026-08-14T10:00:00.000Z",
+      preferred: true,
+    });
+    await saveKey({
+      userId,
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+      model: "gpt-5",
+      validatedAt: "2026-08-15T10:00:00.000Z",
+      preferred: false,
+    });
+
+    const stolen = blobs(userId, "anthropic");
+    db.prepare(
+      `UPDATE ai_keys SET ciphertext = ?, iv = ?, tag = ?, salt = ?
+       WHERE user_id = ? AND provider = ?`,
+    ).run(stolen.ciphertext, stolen.iv, stolen.tag, stolen.salt, userId, "openai");
+
+    await expect(selectKey(userId, "openai")).rejects.toBeInstanceOf(AiError);
+  });
+
   it("selectKey throws provider_error when the stored blob will not decrypt", async () => {
     const userId = makeUser("select-tampered@nomad.test");
     await saveKey({

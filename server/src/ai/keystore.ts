@@ -113,8 +113,12 @@ export async function saveKey(args: {
   preferred: boolean;
 }): Promise<AiKeyPublic> {
   // Awaited before the transaction opens: better-sqlite3 transactions are
-  // synchronous and may not contain an await.
-  const sealed = await encryptApiKey(args.apiKey);
+  // synchronous and may not contain an await. The owner is bound into the GCM
+  // tag, so this blob will only ever open under this (user_id, provider).
+  const sealed = await encryptApiKey(args.apiKey, {
+    userId: args.userId,
+    provider: args.provider,
+  });
 
   const write = db.transaction(() => {
     const { n } = countKeys.get(args.userId) as { n: number };
@@ -215,12 +219,18 @@ export async function selectKey(
   try {
     return {
       providerId: row.provider,
-      apiKey: await decryptApiKey({
-        ciphertext: row.ciphertext,
-        iv: row.iv,
-        tag: row.tag,
-        salt: row.salt,
-      }),
+      // The owner comes from the query's own scoping — `userId` is the caller's
+      // and `row.provider` is the row we selected — so a blob transplanted
+      // from another user's row fails the tag rather than opening.
+      apiKey: await decryptApiKey(
+        {
+          ciphertext: row.ciphertext,
+          iv: row.iv,
+          tag: row.tag,
+          salt: row.salt,
+        },
+        { userId, provider: row.provider },
+      ),
       model: row.model ?? "",
     };
   } catch (err) {

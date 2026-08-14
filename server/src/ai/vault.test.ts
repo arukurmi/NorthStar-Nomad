@@ -8,10 +8,13 @@ import {
   encryptApiKey,
   looksDeployed,
   resolveMasterKey,
+  type KeyOwner,
   type SealedKey,
 } from "./vault.js";
 
 const SECRET = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+/** Every blob is sealed to a (user_id, provider); this is the fixture's. */
+const OWNER: KeyOwner = { userId: 42, provider: "anthropic" };
 const ORIGINAL_MASTER_KEY = process.env.NOMAD_MASTER_KEY;
 
 let warn: ReturnType<typeof vi.spyOn>;
@@ -61,8 +64,8 @@ async function reasonOfAsync(fn: () => Promise<unknown>): Promise<string> {
 
 describe("vault crypto", () => {
   it("round-trips an api key through encrypt and decrypt", async () => {
-    const sealed = await encryptApiKey(SECRET);
-    await expect(decryptApiKey(sealed)).resolves.toBe(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
+    await expect(decryptApiKey(sealed, OWNER)).resolves.toBe(SECRET);
   });
 
   it("derives off the event loop", async () => {
@@ -76,15 +79,15 @@ describe("vault crypto", () => {
         resolve();
       }, 1);
     });
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     await timer;
     expect(timerFired).toBe(true);
-    await expect(decryptApiKey(sealed)).resolves.toBe(SECRET);
+    await expect(decryptApiKey(sealed, OWNER)).resolves.toBe(SECRET);
   });
 
   it("produces a fresh salt and iv on every encrypt of the same plaintext", async () => {
-    const a = await encryptApiKey(SECRET);
-    const b = await encryptApiKey(SECRET);
+    const a = await encryptApiKey(SECRET, OWNER);
+    const b = await encryptApiKey(SECRET, OWNER);
     expect(a.salt.length).toBe(16);
     expect(a.iv.length).toBe(12);
     expect(a.tag.length).toBe(16);
@@ -93,21 +96,21 @@ describe("vault crypto", () => {
   });
 
   it("produces different ciphertext for the same plaintext twice", async () => {
-    const a = await encryptApiKey(SECRET);
-    const b = await encryptApiKey(SECRET);
+    const a = await encryptApiKey(SECRET, OWNER);
+    const b = await encryptApiKey(SECRET, OWNER);
     expect(a.ciphertext.equals(b.ciphertext)).toBe(false);
     // Both still open — the difference is the salt and iv, not the content.
-    await expect(decryptApiKey(a)).resolves.toBe(SECRET);
-    await expect(decryptApiKey(b)).resolves.toBe(SECRET);
+    await expect(decryptApiKey(a, OWNER)).resolves.toBe(SECRET);
+    await expect(decryptApiKey(b, OWNER)).resolves.toBe(SECRET);
   });
 
   it("round-trips concurrent encrypts sharing one salt cache", async () => {
     const sealed = await Promise.all([
-      encryptApiKey(SECRET),
-      encryptApiKey(`${SECRET}-two`),
-      encryptApiKey(`${SECRET}-three`),
+      encryptApiKey(SECRET, OWNER),
+      encryptApiKey(`${SECRET}-two`, OWNER),
+      encryptApiKey(`${SECRET}-three`, OWNER),
     ]);
-    await expect(Promise.all(sealed.map(decryptApiKey))).resolves.toEqual([
+    await expect(Promise.all(sealed.map((one) => decryptApiKey(one, OWNER)))).resolves.toEqual([
       SECRET,
       `${SECRET}-two`,
       `${SECRET}-three`,
@@ -115,7 +118,7 @@ describe("vault crypto", () => {
   });
 
   it("stores last4 as the final four characters of the plaintext", async () => {
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     expect(sealed.last4).toBe(SECRET.slice(-4));
     expect(sealed.last4).toHaveLength(4);
     // Not the prefix: sk-ant- identifies nothing, it is shared by every key.
@@ -123,7 +126,7 @@ describe("vault crypto", () => {
   });
 
   it("ciphertext bytes contain no substring of the plaintext", async () => {
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     for (const encoding of ["utf8", "latin1", "ascii"] as const) {
       const bytes = sealed.ciphertext.toString(encoding);
       expect(bytes).not.toContain(SECRET);
@@ -133,28 +136,28 @@ describe("vault crypto", () => {
   });
 
   it("fails the GCM auth tag when the ciphertext is modified", async () => {
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     sealed.ciphertext[0] ^= 0xff;
-    await expect(decryptApiKey(sealed)).rejects.toThrow(VaultError);
-    await expect(decryptApiKey(sealed)).rejects.toThrow(/auth/i);
-    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+    await expect(decryptApiKey(sealed, OWNER)).rejects.toThrow(VaultError);
+    await expect(decryptApiKey(sealed, OWNER)).rejects.toThrow(/auth/i);
+    await expect(reasonOfAsync(() => decryptApiKey(sealed, OWNER))).resolves.toBe(
       "auth_tag",
     );
   });
 
   it("fails the GCM auth tag when the tag is modified", async () => {
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     sealed.tag[0] ^= 0xff;
-    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+    await expect(reasonOfAsync(() => decryptApiKey(sealed, OWNER))).resolves.toBe(
       "auth_tag",
     );
   });
 
   it("fails the GCM auth tag when the salt is modified", async () => {
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     // A wrong salt derives a wrong key, which lands on the same failure path.
     sealed.salt[0] ^= 0xff;
-    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+    await expect(reasonOfAsync(() => decryptApiKey(sealed, OWNER))).resolves.toBe(
       "auth_tag",
     );
   });
@@ -162,36 +165,90 @@ describe("vault crypto", () => {
   it("fails the GCM auth tag when decrypting with a different master key", async () => {
     process.env.NOMAD_MASTER_KEY = "master-key-number-one-0123456789abcdef";
     __resetMasterKeyForTests();
-    const sealed = await encryptApiKey(SECRET);
-    await expect(decryptApiKey(sealed)).resolves.toBe(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
+    await expect(decryptApiKey(sealed, OWNER)).resolves.toBe(SECRET);
 
     process.env.NOMAD_MASTER_KEY = "master-key-number-two-0123456789abcdef";
     __resetMasterKeyForTests();
-    await expect(decryptApiKey(sealed)).rejects.toThrow(VaultError);
-    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+    await expect(decryptApiKey(sealed, OWNER)).rejects.toThrow(VaultError);
+    await expect(reasonOfAsync(() => decryptApiKey(sealed, OWNER))).resolves.toBe(
       "auth_tag",
     );
   });
 
+  it("opens only under the owner it was sealed for", async () => {
+    const sealed = await encryptApiKey(SECRET, OWNER);
+    await expect(decryptApiKey(sealed, OWNER)).resolves.toBe(SECRET);
+    // A copy of the owner, not the same object: the binding is by value.
+    await expect(
+      decryptApiKey(sealed, { userId: 42, provider: "anthropic" }),
+    ).resolves.toBe(SECRET);
+  });
+
+  it("fails the auth tag when the userId differs", async () => {
+    const sealed = await encryptApiKey(SECRET, OWNER);
+    await expect(
+      reasonOfAsync(() => decryptApiKey(sealed, { ...OWNER, userId: 43 })),
+    ).resolves.toBe("auth_tag");
+    // Including the ids either side, so this is not an off-by-one artefact.
+    await expect(
+      reasonOfAsync(() => decryptApiKey(sealed, { ...OWNER, userId: 41 })),
+    ).resolves.toBe("auth_tag");
+    await expect(
+      reasonOfAsync(() => decryptApiKey(sealed, { ...OWNER, userId: 4 })),
+    ).resolves.toBe("auth_tag");
+  });
+
+  it("fails the auth tag when the provider differs", async () => {
+    const sealed = await encryptApiKey(SECRET, OWNER);
+    for (const provider of ["openai", "gemini"] as const) {
+      await expect(
+        reasonOfAsync(() => decryptApiKey(sealed, { ...OWNER, provider })),
+      ).resolves.toBe("auth_tag");
+    }
+  });
+
+  it("cannot be transplanted between two owners with the same salt", async () => {
+    // The strongest form of the attack: the derived key is identical, because
+    // the salt is reused, so only the AAD stands between B and A's key.
+    const alice = await encryptApiKey(SECRET, { userId: 1, provider: "openai" });
+    const bob = await encryptApiKey("sk-bob-key-0000", {
+      userId: 2,
+      provider: "openai",
+    });
+    const transplanted = { ...bob, salt: alice.salt, iv: alice.iv, ciphertext: alice.ciphertext, tag: alice.tag };
+
+    // Bob's row now holds Alice's bytes verbatim. It does not open for Bob.
+    await expect(
+      reasonOfAsync(() =>
+        decryptApiKey(transplanted, { userId: 2, provider: "openai" }),
+      ),
+    ).resolves.toBe("auth_tag");
+    // And still opens for Alice, so nothing else was broken.
+    await expect(
+      decryptApiKey(transplanted, { userId: 1, provider: "openai" }),
+    ).resolves.toBe(SECRET);
+  });
+
   it('throws VaultError("malformed") on a wrong-length iv', async () => {
-    const sealed = await encryptApiKey(SECRET);
+    const sealed = await encryptApiKey(SECRET, OWNER);
     const shortIv: Omit<SealedKey, "last4"> = {
       ...sealed,
       iv: sealed.iv.subarray(0, 11),
     };
-    await expect(reasonOfAsync(() => decryptApiKey(shortIv))).resolves.toBe(
+    await expect(reasonOfAsync(() => decryptApiKey(shortIv, OWNER))).resolves.toBe(
       "malformed",
     );
 
     // The same structural guard covers the tag and the salt.
     await expect(
       reasonOfAsync(() =>
-        decryptApiKey({ ...sealed, tag: sealed.tag.subarray(0, 8) }),
+        decryptApiKey({ ...sealed, tag: sealed.tag.subarray(0, 8) }, OWNER),
       ),
     ).resolves.toBe("malformed");
     await expect(
       reasonOfAsync(() =>
-        decryptApiKey({ ...sealed, salt: sealed.salt.subarray(0, 4) }),
+        decryptApiKey({ ...sealed, salt: sealed.salt.subarray(0, 4) }, OWNER),
       ),
     ).resolves.toBe("malformed");
   });
