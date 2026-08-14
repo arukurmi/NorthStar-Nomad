@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AiClientError, PROVIDER_META, formatModel, type AiClient } from "../../lib/ai";
 import type { AiErrorCode, AiKeyPublic, ProviderId } from "../../lib/types";
 import { AddKeyForm } from "./AddKeyForm";
@@ -63,6 +63,23 @@ function fmtValidated(iso: string | null): string {
 const PILL_BASE =
   "rounded-full px-3 py-1 text-xs font-medium ring-1 whitespace-nowrap";
 
+/**
+ * `entry` is a brand-new object after every list refresh, so an identity check
+ * says "changed" even when the server said exactly the same thing. Compare the
+ * value instead: a refresh triggered by a *different* row must not disturb this
+ * one — least of all wipe an error the user is still reading.
+ */
+function signatureOf(entry: AiKeyPublic | null): string | null {
+  if (!entry) return null;
+  return [
+    entry.provider,
+    entry.last4,
+    entry.model,
+    entry.validatedAt ?? "",
+    entry.preferred ? "1" : "0",
+  ].join("|");
+}
+
 export function ProviderKeyRow({
   provider,
   entry,
@@ -79,27 +96,37 @@ export function ProviderKeyRow({
   // folding that into `unconfigured` would lose the key we still want to show.
   const [formOpen, setFormOpen] = useState(entry === null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The last server value this row actually applied. The initial state above
+  // already reflects `entry`, so mount starts in sync.
+  const syncedTo = useRef(signatureOf(entry));
 
-  // The server's list is the source of truth; re-sync whenever it changes,
-  // except while this row has a request of its own in flight.
+  // The server's list is the source of truth; re-sync whenever what it says
+  // about *this* provider changes, except while this row has a request of its
+  // own in flight — that request's handler lands on a terminal state itself,
+  // and re-running this effect on `state.status` picks the sync back up.
   useEffect(() => {
-    setState((prev) => {
-      if (prev.status === "validating" || prev.status === "deleting") return prev;
-      return entry
-        ? { status: "connected", key: entry }
-        : { status: "unconfigured" };
-    });
+    const signature = signatureOf(entry);
+    if (signature === syncedTo.current) return;
+    if (state.status === "validating" || state.status === "deleting") return;
+    syncedTo.current = signature;
+    setState(entry ? { status: "connected", key: entry } : { status: "unconfigured" });
     if (entry) setConfirmingDelete(false);
     else setFormOpen(true);
-  }, [entry]);
+  }, [entry, state.status]);
 
   const busy = state.status === "validating" || state.status === "deleting";
-  const current =
+  // `validating` falls back to `entry` on purpose: replacing a key should keep
+  // showing the old one until the new one is accepted. `unconfigured` must not,
+  // or the row would keep offering to delete a key it has just deleted, in the
+  // window before the refreshed list arrives.
+  const current: AiKeyPublic | null =
     state.status === "connected" || state.status === "deleting"
       ? state.key
       : state.status === "error"
-        ? state.key
-        : entry;
+        ? (state.key ?? null)
+        : state.status === "validating"
+          ? entry
+          : null;
 
   const save = async (apiKey: string, model: string | undefined) => {
     setState({ status: "validating", last4: apiKey.slice(-4) });
@@ -131,6 +158,11 @@ export function ProviderKeyRow({
     setState({ status: "deleting", key: current });
     try {
       await client.deleteKey(provider);
+      // Land on `unconfigured` here, before the refresh — same reason as
+      // `save()`. The refresh flips `entry` to null, and the sync effect will
+      // not touch a row that is still `deleting`, so waiting for it would
+      // strand this row on "Removing…" with the deleted key still on screen.
+      setState({ status: "unconfigured" });
       setFormOpen(true);
       await onChanged();
     } catch (err) {
