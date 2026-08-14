@@ -1,0 +1,22 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "{\"city\": \"Goa\", \"nights\": 3}"
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 355,
+    "candidatesTokenCount": 64,
+    "totalTokenCount": 419
+  },
+  "modelVersion": "gemini-2.5-pro"
+}

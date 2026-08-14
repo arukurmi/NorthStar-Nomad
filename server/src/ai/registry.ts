@@ -10,6 +10,7 @@ import {
   type FakeProvider,
   type FakeScript,
 } from "./providers/fake.js";
+import { createGeminiProvider } from "./providers/gemini.js";
 
 /**
  * The only place a route learns a concrete vendor exists. Routes import
@@ -19,8 +20,8 @@ import {
 let providers = buildProviders();
 
 /**
- * Placeholder for a vendor adapter that has not been written yet. Phases 7-8
- * replace the two remaining entries with the real Gemini and OpenAI adapters.
+ * Placeholder for a vendor adapter that has not been written yet. Phase 8
+ * replaces the last remaining entry with the real OpenAI adapter.
  * It fails when *called*, not at module init, so the registry stays total and
  * the fake path is unaffected.
  */
@@ -44,6 +45,8 @@ function realAdapter(id: ProviderId): AiProvider {
   switch (id) {
     case "anthropic":
       return createAnthropicProvider();
+    case "gemini":
+      return createGeminiProvider();
     default:
       return pendingAdapter(id);
   }
