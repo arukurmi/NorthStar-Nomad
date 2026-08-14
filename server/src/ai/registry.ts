@@ -1,9 +1,4 @@
-import {
-  AiError,
-  PROVIDER_IDS,
-  type AiProvider,
-  type ProviderId,
-} from "./provider.js";
+import { PROVIDER_IDS, type AiProvider, type ProviderId } from "./provider.js";
 import { createAnthropicProvider } from "./providers/anthropic.js";
 import {
   createFakeProvider,
@@ -11,6 +6,7 @@ import {
   type FakeScript,
 } from "./providers/fake.js";
 import { createGeminiProvider } from "./providers/gemini.js";
+import { createOpenAiProvider } from "./providers/openai.js";
 
 /**
  * The only place a route learns a concrete vendor exists. Routes import
@@ -20,35 +16,18 @@ import { createGeminiProvider } from "./providers/gemini.js";
 let providers = buildProviders();
 
 /**
- * Placeholder for a vendor adapter that has not been written yet. Phase 8
- * replaces the last remaining entry with the real OpenAI adapter.
- * It fails when *called*, not at module init, so the registry stays total and
- * the fake path is unaffected.
+ * The real vendor adapter for an id. The switch is exhaustive over ProviderId
+ * with no default, so adding a fourth provider is a compile error here — which
+ * is the one place it should be.
  */
-function pendingAdapter(id: ProviderId): AiProvider {
-  const unavailable = () =>
-    Promise.reject(
-      new AiError("provider_error", `the ${id} adapter is not available yet`, {
-        provider: id,
-      }),
-    );
-  return {
-    id,
-    defaultModel: "",
-    validate: unavailable,
-    complete: unavailable,
-  };
-}
-
-/** The real vendor adapter for an id, or a placeholder until its phase lands. */
 function realAdapter(id: ProviderId): AiProvider {
   switch (id) {
     case "anthropic":
       return createAnthropicProvider();
     case "gemini":
       return createGeminiProvider();
-    default:
-      return pendingAdapter(id);
+    case "openai":
+      return createOpenAiProvider();
   }
 }
 
