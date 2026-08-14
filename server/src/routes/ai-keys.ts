@@ -1,7 +1,12 @@
 import { Router } from "express";
 import type { Response } from "express";
 import { requireAuth, type AuthedRequest } from "../auth/tokens.js";
-import { deleteKey, listKeys, saveKey } from "../ai/keystore.js";
+import {
+  deleteKey,
+  listKeys,
+  saveKey,
+  setPreferred,
+} from "../ai/keystore.js";
 import {
   AiError,
   PROVIDER_IDS,
@@ -129,6 +134,30 @@ aiKeysRouter.post("/api/ai/keys", async (req: AuthedRequest, res) => {
 
 aiKeysRouter.get("/api/ai/keys", (req: AuthedRequest, res) => {
   res.json({ keys: listKeys(req.userId as number) });
+});
+
+/**
+ * Changing which provider is the default without re-pasting the key. Forcing a
+ * re-paste to flip a preference would be a dark pattern, and the key is the one
+ * thing the user cannot read back to check.
+ */
+aiKeysRouter.put("/api/ai/keys/preferred", (req: AuthedRequest, res) => {
+  const provider = req.body?.provider;
+  if (!isProviderId(provider)) {
+    sendLocalError(
+      res,
+      400,
+      "bad_request",
+      `provider must be one of ${PROVIDER_IDS.join(", ")}`,
+    );
+    return;
+  }
+  const userId = req.userId as number;
+  if (!setPreferred(userId, provider)) {
+    sendLocalError(res, 404, "not_found", "no key configured for that provider");
+    return;
+  }
+  res.json({ keys: listKeys(userId) });
 });
 
 aiKeysRouter.delete("/api/ai/keys/:provider", (req: AuthedRequest, res) => {
