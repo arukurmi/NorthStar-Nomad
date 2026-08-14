@@ -483,7 +483,7 @@ free. That is what makes the saving visible in the UI.
 | Salt | 16 bytes, `randomBytes(16)`, **fresh per save** | PRD-specified. Fresh-per-save (not fresh-per-user) means replacing a key re-derives, so an old leaked derived key is worthless. |
 | IV | 12 bytes, `randomBytes(12)` | GCM's native nonce size; 12 bytes is the only length that skips GHASH-based derivation and is what the spec recommends. Never reused — new IV every `encryptApiKey` call. |
 | Auth tag | 16 bytes, `cipher.getAuthTag()` | Full-length tag; no truncation. |
-| AAD | none | Nothing outside the ciphertext needs binding for F0. Noted as the obvious future hardening: bind `${userId}:${provider}` as AAD so a row cannot be transplanted between users. |
+| AAD | `${userId}:${provider}` | Binds a blob to the row it lives in, so an attacker with database write access cannot transplant user A's `(ciphertext, iv, tag, salt)` into user B's row and drive A's key from B's session. Both halves come from the row's own primary key. Originally deferred as "future hardening"; taken before any data existed, because there is no migration tooling here and the format could never be changed for free again. |
 | `last4` | `plaintext.slice(-4)` | Last 4 chars, not first — key prefixes (`sk-ant-`, `AIza`) are shared across all keys and identify nothing. |
 
 ### 4.2 Column mapping

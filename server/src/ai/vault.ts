@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from "node:crypto";
+import type { ProviderId } from "./provider.js";
 
 /**
  * The master key every non-production process falls back to. Public on purpose:
@@ -66,6 +67,29 @@ export interface SealedKey {
   tag: Buffer; // 16 bytes
   salt: Buffer; // 16 bytes
   last4: string; // 4 chars, plaintext tail — the only plaintext we persist
+}
+
+/**
+ * Who a sealed key belongs to. Bound into the GCM tag as additional
+ * authenticated data, which is what makes a stored row non-transferable: the
+ * (ciphertext, iv, tag, salt) of one row will not open under another row's
+ * coordinates, so an attacker with database write access cannot copy user A's
+ * blob into user B's row and drive A's key from B's session.
+ *
+ * It is authenticated, not encrypted — the values are already in the row's
+ * primary key. Binding is the whole point.
+ */
+export interface KeyOwner {
+  userId: number;
+  provider: ProviderId;
+}
+
+/**
+ * `${userId}:${provider}`. Both halves come from the row's own primary key, and
+ * neither can contain a colon, so the encoding is unambiguous.
+ */
+function aadFor(owner: KeyOwner): Buffer {
+  return Buffer.from(`${owner.userId}:${owner.provider}`, "utf8");
 }
 
 let masterKey: Buffer | null = null;
@@ -204,11 +228,15 @@ function deriveKey(salt: Buffer): Promise<Buffer> {
   return derived;
 }
 
-/** Encrypts one API key under a fresh random salt + iv. */
-export async function encryptApiKey(plaintext: string): Promise<SealedKey> {
+/** Encrypts one API key under a fresh random salt + iv, bound to its owner. */
+export async function encryptApiKey(
+  plaintext: string,
+  owner: KeyOwner,
+): Promise<SealedKey> {
   const salt = randomBytes(SALT_BYTES);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", await deriveKey(salt), iv);
+  cipher.setAAD(aadFor(owner)); // must precede update()
   const ciphertext = Buffer.concat([
     cipher.update(plaintext, "utf8"),
     cipher.final(),
@@ -217,9 +245,13 @@ export async function encryptApiKey(plaintext: string): Promise<SealedKey> {
   return { ciphertext, iv, tag: cipher.getAuthTag(), salt, last4: plaintext.slice(-4) };
 }
 
-/** Decrypts. Throws VaultError("auth_tag") on tamper or wrong master key. */
+/**
+ * Decrypts. Throws VaultError("auth_tag") on tamper, on a wrong master key, or
+ * when `owner` does not match the owner the blob was sealed for.
+ */
 export async function decryptApiKey(
   sealed: Omit<SealedKey, "last4">,
+  owner: KeyOwner,
 ): Promise<string> {
   const { ciphertext, iv, tag, salt } = sealed;
   if (
@@ -234,6 +266,7 @@ export async function decryptApiKey(
   }
   // Derive outside the try so a missing master key surfaces as itself.
   const decipher = createDecipheriv("aes-256-gcm", await deriveKey(salt), iv);
+  decipher.setAAD(aadFor(owner)); // must precede update()
   decipher.setAuthTag(tag); // must be before final()
   try {
     return Buffer.concat([
@@ -245,7 +278,7 @@ export async function decryptApiKey(
     // partially decrypted bytes on the floor — there is no partial-decrypt path.
     throw new VaultError(
       "auth_tag",
-      "could not authenticate the stored key — wrong master key or tampered data",
+      "could not authenticate the stored key — wrong master key, wrong owner, or tampered data",
     );
   }
 }
