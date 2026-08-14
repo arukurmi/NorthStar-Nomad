@@ -1,8 +1,11 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import express from "express";
 import request from "supertest";
 import type { Response as SupertestResponse } from "supertest";
 import { createApp } from "../app.js";
 import { db } from "../db.js";
+import { requireAuth } from "../auth/tokens.js";
+import { loadUserKey, type AiRequest } from "../ai/loadUserKey.js";
 import { AiError } from "../ai/provider.js";
 import { FAKE_MODEL } from "../ai/providers/fake.js";
 import { resetProviders, useFakeProviders } from "../ai/registry.js";
@@ -27,6 +30,29 @@ function userIdFor(email: string): number {
     }
   ).id;
 }
+
+/**
+ * Stands in for an F1–F4 feature route so the leak tests cover the read side
+ * of the vault too: `loadUserKey` decrypts the stored key and hands the
+ * plaintext to an adapter. It reports the key's *length*, never the key.
+ */
+const logProbe = express();
+logProbe.use("/probe", requireAuth, loadUserKey);
+logProbe.get("/probe", (req: AiRequest, res) => {
+  const ai = req.ai;
+  if (!ai) {
+    res.status(500).json({ error: "loadUserKey did not populate req.ai" });
+    return;
+  }
+  void ai.provider
+    .validate(ai.apiKey, ai.model)
+    .then(() => {
+      res.json({ providerId: ai.providerId, keyLength: ai.apiKey.length });
+    })
+    .catch(() => {
+      res.status(500).json({ error: "probe validate failed" });
+    });
+});
 
 function save(token: string, body: Record<string, unknown>) {
   return request(app)
@@ -482,7 +508,7 @@ describe("key leakage", () => {
     for (const [label, res] of reads) expectNoCanary(label, res);
   });
 
-  it("stores no plaintext key bytes in the ai_keys table", async () => {
+  it("stores no plaintext key bytes in any ai_keys column", async () => {
     const token = await register("canary-storage@nomad.test");
     const saved = await save(token, {
       provider: "anthropic",
@@ -490,14 +516,98 @@ describe("key leakage", () => {
     });
     expect(saved.status).toBe(200);
 
+    // `SELECT *`, not a column list. Naming columns would test only the two
+    // places we already know to look; a column added later — a debug field, a
+    // cached header, a "hint" — is exactly where plaintext would reappear, and
+    // this assertion has to see it without being edited first.
     const row = db
-      .prepare("SELECT ciphertext, last4 FROM ai_keys WHERE user_id = ?")
-      .get(userIdFor("canary-storage@nomad.test")) as {
-      ciphertext: Buffer;
-      last4: string;
-    };
-    expect(row.ciphertext.toString("utf8")).not.toContain(CANARY_MIDDLE);
-    expect(row.ciphertext.toString("latin1")).not.toContain(CANARY_MIDDLE);
+      .prepare("SELECT * FROM ai_keys WHERE user_id = ?")
+      .get(userIdFor("canary-storage@nomad.test")) as Record<string, unknown>;
+
+    const columns = Object.entries(row);
+    expect(columns.length).toBeGreaterThan(0);
+    for (const [column, value] of columns) {
+      // latin1 keeps one byte to one character, so a plaintext run inside a
+      // BLOB survives the conversion instead of collapsing into replacement
+      // characters and hiding the leak it was meant to expose.
+      const serialised =
+        value instanceof Uint8Array
+          ? Buffer.from(value).toString("latin1")
+          : String(value ?? "");
+      expect(serialised, `column ${column} leaked the whole key`).not.toContain(
+        CANARY,
+      );
+      expect(serialised, `column ${column} leaked part of the key`).not.toContain(
+        CANARY_MIDDLE,
+      );
+    }
     expect(row.last4).toBe(CANARY.slice(-4));
+  });
+
+  it("never writes the key to a console method, stdout or stderr", async () => {
+    const lines: string[] = [];
+    const record = (...parts: unknown[]): void => {
+      lines.push(parts.map((part) => String(part)).join(" "));
+    };
+    const writeSpy = (stream: NodeJS.WriteStream) =>
+      vi.spyOn(stream, "write").mockImplementation((chunk: unknown): boolean => {
+        record(chunk);
+        return true;
+      });
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(record),
+      vi.spyOn(console, "warn").mockImplementation(record),
+      vi.spyOn(console, "error").mockImplementation(record),
+      writeSpy(process.stdout),
+      writeSpy(process.stderr),
+    ];
+
+    try {
+      const token = await register("canary-logs@nomad.test");
+      const auth = `Bearer ${token}`;
+
+      const saved = await save(token, {
+        provider: "anthropic",
+        apiKey: CANARY,
+        model: "claude-sonnet-5",
+      });
+      expect(saved.status).toBe(200);
+
+      // The route is holding the plaintext at the moment it builds this error,
+      // which is where a well-meaning `console.error(err)` would land.
+      useFakeProviders({
+        validate: { ok: false, code: "invalid_key", message: "rejected" },
+      });
+      const rejected = await save(token, {
+        provider: "anthropic",
+        apiKey: CANARY,
+      });
+      expect(rejected.status).toBe(401);
+      resetProviders();
+
+      // The other end of the vault: loadUserKey decrypts the stored canary and
+      // hands the plaintext to an adapter, exactly as an F1–F4 route will.
+      const probed = await request(logProbe)
+        .get("/probe")
+        .set("Authorization", auth);
+      expect(probed.status).toBe(200);
+      expect(probed.body.keyLength).toBe(CANARY.length);
+
+      await request(app).get("/api/ai/keys").set("Authorization", auth);
+      await request(app)
+        .delete("/api/ai/keys/anthropic")
+        .set("Authorization", auth);
+      // Some logging defers itself with setImmediate; give it a turn to run
+      // while the spies are still installed.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+
+    const logged = lines.join("\n");
+    expect(logged, "a log line leaked the whole key").not.toContain(CANARY);
+    expect(logged, "a log line leaked part of the key").not.toContain(
+      CANARY_MIDDLE,
+    );
   });
 });
