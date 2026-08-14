@@ -104,15 +104,17 @@ const countKeys = db.prepare(
  * in the DO UPDATE list — it records when the user first connected that
  * provider.
  */
-export function saveKey(args: {
+export async function saveKey(args: {
   userId: number;
   provider: ProviderId;
   apiKey: string;
   model: string;
   validatedAt: string;
   preferred: boolean;
-}): AiKeyPublic {
-  const sealed = encryptApiKey(args.apiKey);
+}): Promise<AiKeyPublic> {
+  // Awaited before the transaction opens: better-sqlite3 transactions are
+  // synchronous and may not contain an await.
+  const sealed = await encryptApiKey(args.apiKey);
 
   const write = db.transaction(() => {
     const { n } = countKeys.get(args.userId) as { n: number };
@@ -199,10 +201,10 @@ const selectNewest = db.prepare(`
  *
  * Throws AiError("provider_error") if the stored blob will not decrypt.
  */
-export function selectKey(
+export async function selectKey(
   userId: number,
   prefer?: ProviderId,
-): DecryptedKey | null {
+): Promise<DecryptedKey | null> {
   const row = (
     prefer
       ? selectExplicit.get(userId, prefer)
@@ -213,7 +215,7 @@ export function selectKey(
   try {
     return {
       providerId: row.provider,
-      apiKey: decryptApiKey({
+      apiKey: await decryptApiKey({
         ciphertext: row.ciphertext,
         iv: row.iv,
         tag: row.tag,

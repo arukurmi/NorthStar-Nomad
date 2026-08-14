@@ -47,15 +47,44 @@ function reasonOf(fn: () => unknown): string {
   throw new Error(`expected a VaultError, got a value instead: ${String(returned)}`);
 }
 
+/** The async twin of `reasonOf`, for the promise-returning seal/open pair. */
+async function reasonOfAsync(fn: () => Promise<unknown>): Promise<string> {
+  let returned: unknown;
+  try {
+    returned = await fn();
+  } catch (err) {
+    if (err instanceof VaultError) return err.reason;
+    throw err;
+  }
+  throw new Error(`expected a VaultError, got a value instead: ${String(returned)}`);
+}
+
 describe("vault crypto", () => {
-  it("round-trips an api key through encrypt and decrypt", () => {
-    const sealed = encryptApiKey(SECRET);
-    expect(decryptApiKey(sealed)).toBe(SECRET);
+  it("round-trips an api key through encrypt and decrypt", async () => {
+    const sealed = await encryptApiKey(SECRET);
+    await expect(decryptApiKey(sealed)).resolves.toBe(SECRET);
   });
 
-  it("produces a fresh salt and iv on every encrypt of the same plaintext", () => {
-    const a = encryptApiKey(SECRET);
-    const b = encryptApiKey(SECRET);
+  it("derives off the event loop", async () => {
+    // scryptSync at N=16384 blocks the loop for 60–90 ms per call. The async
+    // form must let a timer that was queued first still fire first.
+    __resetMasterKeyForTests();
+    let timerFired = false;
+    const timer = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timerFired = true;
+        resolve();
+      }, 1);
+    });
+    const sealed = await encryptApiKey(SECRET);
+    await timer;
+    expect(timerFired).toBe(true);
+    await expect(decryptApiKey(sealed)).resolves.toBe(SECRET);
+  });
+
+  it("produces a fresh salt and iv on every encrypt of the same plaintext", async () => {
+    const a = await encryptApiKey(SECRET);
+    const b = await encryptApiKey(SECRET);
     expect(a.salt.length).toBe(16);
     expect(a.iv.length).toBe(12);
     expect(a.tag.length).toBe(16);
@@ -63,25 +92,38 @@ describe("vault crypto", () => {
     expect(a.iv.equals(b.iv)).toBe(false);
   });
 
-  it("produces different ciphertext for the same plaintext twice", () => {
-    const a = encryptApiKey(SECRET);
-    const b = encryptApiKey(SECRET);
+  it("produces different ciphertext for the same plaintext twice", async () => {
+    const a = await encryptApiKey(SECRET);
+    const b = await encryptApiKey(SECRET);
     expect(a.ciphertext.equals(b.ciphertext)).toBe(false);
     // Both still open — the difference is the salt and iv, not the content.
-    expect(decryptApiKey(a)).toBe(SECRET);
-    expect(decryptApiKey(b)).toBe(SECRET);
+    await expect(decryptApiKey(a)).resolves.toBe(SECRET);
+    await expect(decryptApiKey(b)).resolves.toBe(SECRET);
   });
 
-  it("stores last4 as the final four characters of the plaintext", () => {
-    const sealed = encryptApiKey(SECRET);
+  it("round-trips concurrent encrypts sharing one salt cache", async () => {
+    const sealed = await Promise.all([
+      encryptApiKey(SECRET),
+      encryptApiKey(`${SECRET}-two`),
+      encryptApiKey(`${SECRET}-three`),
+    ]);
+    await expect(Promise.all(sealed.map(decryptApiKey))).resolves.toEqual([
+      SECRET,
+      `${SECRET}-two`,
+      `${SECRET}-three`,
+    ]);
+  });
+
+  it("stores last4 as the final four characters of the plaintext", async () => {
+    const sealed = await encryptApiKey(SECRET);
     expect(sealed.last4).toBe(SECRET.slice(-4));
     expect(sealed.last4).toHaveLength(4);
     // Not the prefix: sk-ant- identifies nothing, it is shared by every key.
     expect(sealed.last4).not.toBe(SECRET.slice(0, 4));
   });
 
-  it("ciphertext bytes contain no substring of the plaintext", () => {
-    const sealed = encryptApiKey(SECRET);
+  it("ciphertext bytes contain no substring of the plaintext", async () => {
+    const sealed = await encryptApiKey(SECRET);
     for (const encoding of ["utf8", "latin1", "ascii"] as const) {
       const bytes = sealed.ciphertext.toString(encoding);
       expect(bytes).not.toContain(SECRET);
@@ -90,54 +132,68 @@ describe("vault crypto", () => {
     }
   });
 
-  it("fails the GCM auth tag when the ciphertext is modified", () => {
-    const sealed = encryptApiKey(SECRET);
+  it("fails the GCM auth tag when the ciphertext is modified", async () => {
+    const sealed = await encryptApiKey(SECRET);
     sealed.ciphertext[0] ^= 0xff;
-    expect(() => decryptApiKey(sealed)).toThrow(VaultError);
-    expect(() => decryptApiKey(sealed)).toThrow(/auth/i);
-    expect(reasonOf(() => decryptApiKey(sealed))).toBe("auth_tag");
+    await expect(decryptApiKey(sealed)).rejects.toThrow(VaultError);
+    await expect(decryptApiKey(sealed)).rejects.toThrow(/auth/i);
+    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+      "auth_tag",
+    );
   });
 
-  it("fails the GCM auth tag when the tag is modified", () => {
-    const sealed = encryptApiKey(SECRET);
+  it("fails the GCM auth tag when the tag is modified", async () => {
+    const sealed = await encryptApiKey(SECRET);
     sealed.tag[0] ^= 0xff;
-    expect(reasonOf(() => decryptApiKey(sealed))).toBe("auth_tag");
+    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+      "auth_tag",
+    );
   });
 
-  it("fails the GCM auth tag when the salt is modified", () => {
-    const sealed = encryptApiKey(SECRET);
+  it("fails the GCM auth tag when the salt is modified", async () => {
+    const sealed = await encryptApiKey(SECRET);
     // A wrong salt derives a wrong key, which lands on the same failure path.
     sealed.salt[0] ^= 0xff;
-    expect(reasonOf(() => decryptApiKey(sealed))).toBe("auth_tag");
+    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+      "auth_tag",
+    );
   });
 
-  it("fails the GCM auth tag when decrypting with a different master key", () => {
+  it("fails the GCM auth tag when decrypting with a different master key", async () => {
     process.env.NOMAD_MASTER_KEY = "master-key-number-one-0123456789abcdef";
     __resetMasterKeyForTests();
-    const sealed = encryptApiKey(SECRET);
-    expect(decryptApiKey(sealed)).toBe(SECRET);
+    const sealed = await encryptApiKey(SECRET);
+    await expect(decryptApiKey(sealed)).resolves.toBe(SECRET);
 
     process.env.NOMAD_MASTER_KEY = "master-key-number-two-0123456789abcdef";
     __resetMasterKeyForTests();
-    expect(() => decryptApiKey(sealed)).toThrow(VaultError);
-    expect(reasonOf(() => decryptApiKey(sealed))).toBe("auth_tag");
+    await expect(decryptApiKey(sealed)).rejects.toThrow(VaultError);
+    await expect(reasonOfAsync(() => decryptApiKey(sealed))).resolves.toBe(
+      "auth_tag",
+    );
   });
 
-  it('throws VaultError("malformed") on a wrong-length iv', () => {
-    const sealed = encryptApiKey(SECRET);
+  it('throws VaultError("malformed") on a wrong-length iv', async () => {
+    const sealed = await encryptApiKey(SECRET);
     const shortIv: Omit<SealedKey, "last4"> = {
       ...sealed,
       iv: sealed.iv.subarray(0, 11),
     };
-    expect(reasonOf(() => decryptApiKey(shortIv))).toBe("malformed");
+    await expect(reasonOfAsync(() => decryptApiKey(shortIv))).resolves.toBe(
+      "malformed",
+    );
 
     // The same structural guard covers the tag and the salt.
-    expect(
-      reasonOf(() => decryptApiKey({ ...sealed, tag: sealed.tag.subarray(0, 8) })),
-    ).toBe("malformed");
-    expect(
-      reasonOf(() => decryptApiKey({ ...sealed, salt: sealed.salt.subarray(0, 4) })),
-    ).toBe("malformed");
+    await expect(
+      reasonOfAsync(() =>
+        decryptApiKey({ ...sealed, tag: sealed.tag.subarray(0, 8) }),
+      ),
+    ).resolves.toBe("malformed");
+    await expect(
+      reasonOfAsync(() =>
+        decryptApiKey({ ...sealed, salt: sealed.salt.subarray(0, 4) }),
+      ),
+    ).resolves.toBe("malformed");
   });
 });
 

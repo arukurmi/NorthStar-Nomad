@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scrypt } from "node:crypto";
 
 /**
  * The master key every non-production process falls back to. Public on purpose:
@@ -76,8 +76,11 @@ let devWarningPrinted = false;
  * otherwise pay it on every AI request. Keyed by salt alone, which is only safe
  * because the master key is resolved once per process and can change only via
  * __resetMasterKeyForTests, which clears this map.
+ *
+ * It holds *promises*, so two concurrent requests sharing a salt do the work
+ * once rather than twice.
  */
-const derivedKeys = new Map<string, Buffer>();
+const derivedKeys = new Map<string, Promise<Buffer>>();
 
 /**
  * True when a platform marker says this process runs on infrastructure rather
@@ -168,11 +171,31 @@ export function __resetMasterKeyForTests(): void {
   derivedKeys.clear();
 }
 
-function deriveKey(salt: Buffer): Buffer {
+/**
+ * The callback form, not `scryptSync`. At N=16384 the sync call blocks the
+ * event loop for 60–90 ms, so a handful of concurrent saves stalls every other
+ * request on this single-process server; the async form runs on the libuv
+ * threadpool and leaves the loop free.
+ */
+function scryptAsync(password: Buffer, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, KEY_BYTES, SCRYPT, (err, derived) => {
+      if (err) reject(err);
+      else resolve(derived);
+    });
+  });
+}
+
+function deriveKey(salt: Buffer): Promise<Buffer> {
   const memoKey = salt.toString("hex");
   const memo = derivedKeys.get(memoKey);
   if (memo) return memo;
-  const derived = scryptSync(getMasterKey(), salt, KEY_BYTES, SCRYPT);
+  // getMasterKey() throws synchronously on a bad configuration; that is
+  // deliberate, so a misconfigured process fails as itself rather than as a
+  // rejected derivation.
+  const derived = scryptAsync(getMasterKey(), salt);
+  // A failed derivation must not be memoised as the answer for this salt.
+  void derived.catch(() => derivedKeys.delete(memoKey));
   if (derivedKeys.size >= DERIVED_KEY_CACHE_MAX) {
     const oldest = derivedKeys.keys().next().value;
     if (oldest !== undefined) derivedKeys.delete(oldest);
@@ -182,10 +205,10 @@ function deriveKey(salt: Buffer): Buffer {
 }
 
 /** Encrypts one API key under a fresh random salt + iv. */
-export function encryptApiKey(plaintext: string): SealedKey {
+export async function encryptApiKey(plaintext: string): Promise<SealedKey> {
   const salt = randomBytes(SALT_BYTES);
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", deriveKey(salt), iv);
+  const cipher = createCipheriv("aes-256-gcm", await deriveKey(salt), iv);
   const ciphertext = Buffer.concat([
     cipher.update(plaintext, "utf8"),
     cipher.final(),
@@ -195,7 +218,9 @@ export function encryptApiKey(plaintext: string): SealedKey {
 }
 
 /** Decrypts. Throws VaultError("auth_tag") on tamper or wrong master key. */
-export function decryptApiKey(sealed: Omit<SealedKey, "last4">): string {
+export async function decryptApiKey(
+  sealed: Omit<SealedKey, "last4">,
+): Promise<string> {
   const { ciphertext, iv, tag, salt } = sealed;
   if (
     iv.length !== IV_BYTES ||
@@ -208,7 +233,7 @@ export function decryptApiKey(sealed: Omit<SealedKey, "last4">): string {
     );
   }
   // Derive outside the try so a missing master key surfaces as itself.
-  const decipher = createDecipheriv("aes-256-gcm", deriveKey(salt), iv);
+  const decipher = createDecipheriv("aes-256-gcm", await deriveKey(salt), iv);
   decipher.setAuthTag(tag); // must be before final()
   try {
     return Buffer.concat([
