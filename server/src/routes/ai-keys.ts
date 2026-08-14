@@ -14,6 +14,7 @@ import {
   type ProviderId,
 } from "../ai/provider.js";
 import { getProvider } from "../ai/registry.js";
+import { usageSummary, usageTotals } from "../ai/usage.js";
 
 /**
  * Deliberately loose — prefix, character class, length floor — and centralised
@@ -134,6 +135,16 @@ aiKeysRouter.post("/api/ai/keys", async (req: AuthedRequest, res) => {
 
 aiKeysRouter.get("/api/ai/keys", (req: AuthedRequest, res) => {
   res.json({ keys: listKeys(req.userId as number) });
+});
+
+/**
+ * What the user has spent, scoped to them. Empty until F1 ships — an empty
+ * array is the correct answer for someone who has made no AI calls, not a
+ * broken one.
+ */
+aiKeysRouter.get("/api/ai/usage", (req: AuthedRequest, res) => {
+  const usage = usageSummary(req.userId as number);
+  res.json({ usage, totals: usageTotals(usage) });
 });
 
 /**
