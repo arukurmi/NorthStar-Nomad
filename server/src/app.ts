@@ -1,4 +1,7 @@
-import express, { type Express } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+} from "express";
 import cors, { type CorsOptions } from "cors";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -28,6 +31,57 @@ export function corsOptions(env: NodeJS.ProcessEnv = process.env): CorsOptions {
   return { origin: env.NODE_ENV !== "production" };
 }
 
+/** What body-parser attaches to the errors it throws. */
+interface HttpError extends Error {
+  type?: string;
+  status?: number;
+  statusCode?: number;
+}
+
+/**
+ * Terminal error handler. Without it, Express's finalhandler answers a
+ * body-parser failure by writing `err.stack` into the **response** (outside
+ * production) and to stderr — and V8 quotes a ~10-character window of the raw
+ * body in its parse errors. Verified before this was written: a POST to
+ * /api/ai/keys with the body `{"apiKey": AIzaSyCANARY…}` came back 200-odd
+ * bytes of HTML containing `..."apiKey": AIzaSyCANA"...`, key material and all,
+ * plus absolute paths into node_modules.
+ *
+ * That path bypasses every AiError guard because the credential never reaches
+ * our code — the parser fails first. So: fixed strings only, nothing derived
+ * from the request body, ever.
+ */
+export const errorHandler: ErrorRequestHandler = (err, _req, res, next) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  const httpError = err as HttpError;
+  const status = httpError.status ?? httpError.statusCode;
+
+  if (httpError.type === "entity.parse.failed") {
+    res.status(400).json({
+      error: "that request body is not valid JSON",
+      code: "bad_request",
+    });
+    return;
+  }
+  // The rest of body-parser's failures — entity.too.large, request.aborted,
+  // encoding.unsupported. Same rule: the status is safe, the message is not.
+  if (httpError.type !== undefined && status !== undefined && status < 500) {
+    res.status(status).json({
+      error: "that request could not be read",
+      code: "bad_request",
+    });
+    return;
+  }
+
+  // A genuine server fault, not something the caller's bytes produced. Its
+  // stack is ours and is worth having; the response still says nothing.
+  console.error(err instanceof Error ? err.stack : String(err));
+  res.status(500).json({ error: "something went wrong", code: "internal" });
+};
+
 export function createApp(): Express {
   const app = express();
   app.use(cors(corsOptions()));
@@ -56,6 +110,10 @@ export function createApp(): Express {
       res.sendFile(path.join(webDist, "index.html"));
     });
   }
+
+  // Last, after every router: an error handler Express only reaches once
+  // nothing else has answered.
+  app.use(errorHandler);
 
   return app;
 }

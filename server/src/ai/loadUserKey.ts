@@ -45,20 +45,43 @@ function isProviderId(value: unknown): value is ProviderId {
  *
  * Selection order is strict: an explicit provider on the request, then the
  * stored preference, then the most recently validated key.
+ *
+ * Exported synchronously because Express 4 does not await a middleware: the
+ * async work is wrapped so a rejection becomes a response rather than an
+ * unhandled rejection that hangs the request.
  */
 export function loadUserKey(
   req: AiRequest,
   res: Response,
   next: NextFunction,
 ): void {
+  void selectForRequest(req, res, next).catch((err: unknown) => {
+    if (!res.headersSent) sendAiError(res, err);
+  });
+}
+
+async function selectForRequest(
+  req: AiRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   const asked: unknown = req.body?.provider ?? req.query?.provider;
-  // Validated against the enum: a value that is not a provider id is not an
-  // explicit preference, so it never reaches the keystore.
+  // A provider param that is present but not a provider id is a mistake, not
+  // an absence of preference. Treating it as "no preference" would silently
+  // serve `?provider=OpenAI` from whichever vendor happens to be the default
+  // and bill the wrong account's key.
+  if (asked !== undefined && !isProviderId(asked)) {
+    res.status(400).json({
+      error: `provider must be one of ${PROVIDER_IDS.join(", ")}`,
+      code: "bad_request",
+    });
+    return;
+  }
   const prefer = isProviderId(asked) ? asked : undefined;
 
   let key;
   try {
-    key = selectKey(req.userId as number, prefer);
+    key = await selectKey(req.userId as number, prefer);
   } catch (err) {
     // selectKey raises provider_error, not invalid_key, for a blob that will
     // not decrypt: a 401 would sign the user out over a storage fault.

@@ -172,7 +172,7 @@ describe("GET /api/ai/usage", () => {
 
   it("deleting a key preserves historical usage rows", async () => {
     const { userId, token } = makeUser("usage-after-delete@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,

@@ -41,14 +41,14 @@ function makeUser(email: string): { userId: number; token: string } {
   return { userId, token: signToken(userId) };
 }
 
-function addKey(
+async function addKey(
   userId: number,
   provider: "anthropic" | "gemini" | "openai",
   apiKey: string,
   validatedAt: string,
   preferred = false,
-): void {
-  saveKey({
+): Promise<void> {
+  await saveKey({
     userId,
     provider,
     apiKey,
@@ -76,8 +76,8 @@ describe("loadUserKey", () => {
 
   it("selects the explicitly requested provider from the body", async () => {
     const { userId, token } = makeUser("mw-body@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
-    addKey(userId, "openai", OPENAI_KEY, "2026-08-01T10:00:00.000Z");
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "openai", OPENAI_KEY, "2026-08-01T10:00:00.000Z");
 
     const res = await request(probe)
       .post("/probe")
@@ -92,8 +92,8 @@ describe("loadUserKey", () => {
 
   it("selects the explicitly requested provider from the query string", async () => {
     const { userId, token } = makeUser("mw-query@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
-    addKey(userId, "openai", OPENAI_KEY, "2026-08-01T10:00:00.000Z");
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "openai", OPENAI_KEY, "2026-08-01T10:00:00.000Z");
 
     const res = await request(probe)
       .get("/probe?provider=openai")
@@ -105,7 +105,7 @@ describe("loadUserKey", () => {
 
   it("428 no_key naming the provider when an explicit one is not configured", async () => {
     const { userId, token } = makeUser("mw-named@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
 
     const res = await request(probe)
       .post("/probe")
@@ -121,7 +121,7 @@ describe("loadUserKey", () => {
   it("does not silently fall back when an explicit provider is unavailable", async () => {
     const fakes = useFakeProviders();
     const { userId, token } = makeUser("mw-no-fallback@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
 
     const res = await request(probe)
       .post("/probe")
@@ -136,11 +136,45 @@ describe("loadUserKey", () => {
     expect(fakes.gemini.calls).toHaveLength(0);
   });
 
+  it("400 bad_request when an explicit provider is present but not a provider id", async () => {
+    const fakes = useFakeProviders();
+    const { userId, token } = makeUser("mw-typo@nomad.test");
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+
+    // `?provider=OpenAI` — a capitalisation typo. Treating it as "no
+    // preference" served the request from Anthropic instead and billed a key
+    // the caller never named.
+    const query = await request(probe)
+      .get("/probe?provider=OpenAI")
+      .set("Authorization", `Bearer ${token}`);
+    expect(query.status).toBe(400);
+    expect(query.body.code).toBe("bad_request");
+    expect(query.body.error).toContain("anthropic, gemini, openai");
+
+    const body = await request(probe)
+      .post("/probe")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ provider: "claude" });
+    expect(body.status).toBe(400);
+    expect(body.body.code).toBe("bad_request");
+
+    // An empty value is present, not absent, so it is also a mistake.
+    const empty = await request(probe)
+      .get("/probe?provider=")
+      .set("Authorization", `Bearer ${token}`);
+    expect(empty.status).toBe(400);
+
+    // No key was decrypted and no vendor was called for any of the three.
+    expect(fakes.anthropic.calls).toHaveLength(0);
+    expect(fakes.openai.calls).toHaveLength(0);
+    expect(fakes.gemini.calls).toHaveLength(0);
+  });
+
   it("selects the stored preference when no explicit provider is given", async () => {
     const { userId, token } = makeUser("mw-pref@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-01T10:00:00.000Z", true);
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-01T10:00:00.000Z", true);
     // Validated far more recently, so recency alone would pick openai.
-    addKey(userId, "openai", OPENAI_KEY, "2026-08-20T10:00:00.000Z");
+    await addKey(userId, "openai", OPENAI_KEY, "2026-08-20T10:00:00.000Z");
 
     const res = await request(probe)
       .get("/probe")
@@ -152,8 +186,8 @@ describe("loadUserKey", () => {
 
   it("selects the most recently validated key when no preference is stored", async () => {
     const { userId, token } = makeUser("mw-recent@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-01T10:00:00.000Z");
-    addKey(userId, "openai", OPENAI_KEY, "2026-08-20T10:00:00.000Z");
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-01T10:00:00.000Z");
+    await addKey(userId, "openai", OPENAI_KEY, "2026-08-20T10:00:00.000Z");
     db.prepare("DELETE FROM ai_prefs WHERE user_id = ?").run(userId);
 
     const res = await request(probe)
@@ -167,7 +201,7 @@ describe("loadUserKey", () => {
   it("hands the decrypted plaintext key to the provider adapter", async () => {
     const fakes = useFakeProviders();
     const { userId, token } = makeUser("mw-plaintext@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
 
     const res = await request(probe)
       .get("/probe")
@@ -184,7 +218,7 @@ describe("loadUserKey", () => {
 
   it("502 provider_error when the stored ciphertext has been tampered with", async () => {
     const { userId, token } = makeUser("mw-tampered@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
     const row = db
       .prepare("SELECT ciphertext FROM ai_keys WHERE user_id = ?")
       .get(userId) as { ciphertext: Buffer };
@@ -217,8 +251,8 @@ describe("loadUserKey", () => {
 describe("PUT /api/ai/keys/preferred", () => {
   it("PUT /api/ai/keys/preferred switches the default and returns the full list", async () => {
     const { userId, token } = makeUser("pref-switch@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
-    addKey(userId, "openai", OPENAI_KEY, "2026-08-01T10:00:00.000Z");
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "openai", OPENAI_KEY, "2026-08-01T10:00:00.000Z");
 
     const res = await request(app)
       .put("/api/ai/keys/preferred")
@@ -244,7 +278,7 @@ describe("PUT /api/ai/keys/preferred", () => {
 
   it("PUT /api/ai/keys/preferred 404s for an unconfigured provider", async () => {
     const { userId, token } = makeUser("pref-missing@nomad.test");
-    addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
+    await addKey(userId, "anthropic", ANTHROPIC_KEY, "2026-08-20T10:00:00.000Z", true);
 
     const res = await request(app)
       .put("/api/ai/keys/preferred")

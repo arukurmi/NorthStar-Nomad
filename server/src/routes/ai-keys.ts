@@ -14,7 +14,28 @@ import {
   type ProviderId,
 } from "../ai/provider.js";
 import { getProvider } from "../ai/registry.js";
+import { createRateLimiter } from "../ai/rateLimit.js";
 import { usageSummary, usageTotals } from "../ai/usage.js";
+
+/**
+ * Ten saves an hour per account. A save derives a scrypt key and then makes a
+ * live call to a vendor with whatever credential was pasted — so without a
+ * limit this route is both a way to soak the server's CPU and a free oracle for
+ * testing stolen API keys against three vendors. Ten is far above what a real
+ * user needs (they save a key once, maybe re-paste it after a typo) and far
+ * below what a script wants.
+ */
+const SAVE_LIMIT = 10;
+const SAVE_WINDOW_MS = 60 * 60 * 1000;
+const saveLimiter = createRateLimiter({
+  limit: SAVE_LIMIT,
+  windowMs: SAVE_WINDOW_MS,
+});
+
+/** Test-only: the limiter is module state shared by every test in a file. */
+export function __resetSaveLimitForTests(): void {
+  saveLimiter.reset();
+}
 
 /**
  * Deliberately loose — prefix, character class, length floor — and centralised
@@ -60,6 +81,22 @@ aiKeysRouter.use("/api/ai", requireAuth);
 
 aiKeysRouter.post("/api/ai/keys", async (req: AuthedRequest, res) => {
   const userId = req.userId as number; // requireAuth guarantees this
+
+  // Counted before any validation: a rejected attempt is exactly what an
+  // oracle probe looks like, so it has to cost the caller budget too.
+  const limit = saveLimiter.check(`save:${userId}`);
+  if (!limit.allowed) {
+    sendAiError(
+      res,
+      new AiError(
+        "rate_limited",
+        `too many key saves — try again in ${limit.retryAfter}s`,
+        { retryAfter: limit.retryAfter },
+      ),
+    );
+    return;
+  }
+
   const { provider, model, preferred } = req.body ?? {};
 
   if (!isProviderId(provider)) {
@@ -119,7 +156,7 @@ aiKeysRouter.post("/api/ai/keys", async (req: AuthedRequest, res) => {
     }
 
     // Nothing is written until the provider has confirmed the credential.
-    const key = saveKey({
+    const key = await saveKey({
       userId,
       provider,
       apiKey,

@@ -6,6 +6,7 @@ import { db } from "../db.js";
 import { AiError } from "../ai/provider.js";
 import { FAKE_MODEL } from "../ai/providers/fake.js";
 import { resetProviders, useFakeProviders } from "../ai/registry.js";
+import { __resetSaveLimitForTests } from "./ai-keys.js";
 
 const app = createApp();
 
@@ -36,6 +37,7 @@ function save(token: string, body: Record<string, unknown>) {
 
 afterEach(() => {
   resetProviders();
+  __resetSaveLimitForTests();
 });
 
 describe("POST /api/ai/keys", () => {
@@ -250,6 +252,57 @@ describe("POST /api/ai/keys", () => {
       .get("/api/ai/keys")
       .set("Authorization", `Bearer ${token}`);
     expect(list.body.keys).toHaveLength(1);
+  });
+});
+
+describe("POST /api/ai/keys rate limit", () => {
+  it("429s the eleventh save in an hour and names a retryAfter", async () => {
+    const token = await register("rate-limit@nomad.test");
+
+    for (let n = 0; n < 10; n += 1) {
+      const res = await save(token, { provider: "anthropic", apiKey: ANTHROPIC_KEY });
+      expect(res.status).toBe(200);
+    }
+
+    const blocked = await save(token, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe("rate_limited");
+    expect(blocked.body.retryAfter).toBeGreaterThan(0);
+    expect(blocked.headers["retry-after"]).toBe(String(blocked.body.retryAfter));
+    // Nothing about the rejected credential comes back.
+    expect(blocked.text).not.toContain(ANTHROPIC_KEY.slice(8, 24));
+  });
+
+  it("counts rejected attempts too, so it caps the validation oracle", async () => {
+    const token = await register("rate-limit-oracle@nomad.test");
+
+    // Ten probes with a key that never passes shape validation. If only
+    // successful saves were counted, an attacker could test stolen keys
+    // against three vendors indefinitely.
+    for (let n = 0; n < 10; n += 1) {
+      const res = await save(token, { provider: "anthropic", apiKey: "sk-ant-nope" });
+      expect(res.status).toBe(400);
+    }
+
+    const blocked = await save(token, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    expect(blocked.status).toBe(429);
+  });
+
+  it("is scoped per account", async () => {
+    const mine = await register("rate-limit-mine@nomad.test");
+    const theirs = await register("rate-limit-theirs@nomad.test");
+    for (let n = 0; n < 10; n += 1) {
+      await save(mine, { provider: "anthropic", apiKey: ANTHROPIC_KEY });
+    }
+    expect((await save(mine, { provider: "anthropic", apiKey: ANTHROPIC_KEY })).status).toBe(429);
+    // One noisy account does not lock everybody else out.
+    expect((await save(theirs, { provider: "anthropic", apiKey: ANTHROPIC_KEY })).status).toBe(200);
   });
 });
 

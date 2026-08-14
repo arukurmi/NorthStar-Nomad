@@ -35,9 +35,9 @@ function blobs(userId: number, provider: string) {
 }
 
 describe("keystore", () => {
-  it("saveKey inserts a row and returns the redacted shape", () => {
+  it("saveKey inserts a row and returns the redacted shape", async () => {
     const userId = makeUser("save@nomad.test");
-    const key = saveKey({
+    const key = await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -63,9 +63,9 @@ describe("keystore", () => {
     ]);
   });
 
-  it("saveKey upserts on a second save for the same provider", () => {
+  it("saveKey upserts on a second save for the same provider", async () => {
     const userId = makeUser("upsert@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -73,7 +73,7 @@ describe("keystore", () => {
       validatedAt: "2026-08-14T10:00:00.000Z",
       preferred: false,
     });
-    const second = saveKey({
+    const second = await saveKey({
       userId,
       provider: "anthropic",
       apiKey: "sk-ant-api03-a-completely-different-key-9999",
@@ -89,14 +89,14 @@ describe("keystore", () => {
     expect(second.model).toBe("claude-haiku-5");
     expect(second.last4).toBe("9999");
     // The upsert refreshes the credential, not the first-connected date.
-    expect(selectKey(userId)?.apiKey).toBe(
+    expect((await selectKey(userId))?.apiKey).toBe(
       "sk-ant-api03-a-completely-different-key-9999",
     );
   });
 
-  it("saveKey rotates the salt and iv on upsert", () => {
+  it("saveKey rotates the salt and iv on upsert", async () => {
     const userId = makeUser("rotate@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -106,7 +106,7 @@ describe("keystore", () => {
     });
     const before = blobs(userId, "openai");
 
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -122,9 +122,9 @@ describe("keystore", () => {
     expect(after.ciphertext.equals(before.ciphertext)).toBe(false);
   });
 
-  it("saveKey marks the first key preferred automatically", () => {
+  it("saveKey marks the first key preferred automatically", async () => {
     const userId = makeUser("first-pref@nomad.test");
-    const first = saveKey({
+    const first = await saveKey({
       userId,
       provider: "gemini",
       apiKey: GEMINI_KEY,
@@ -135,7 +135,7 @@ describe("keystore", () => {
     expect(first.preferred).toBe(true);
 
     // A second key does not steal the preference unless it asks to.
-    const second = saveKey({
+    const second = await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -144,10 +144,10 @@ describe("keystore", () => {
       preferred: false,
     });
     expect(second.preferred).toBe(false);
-    expect(selectKey(userId)?.providerId).toBe("gemini");
+    expect((await selectKey(userId))?.providerId).toBe("gemini");
 
     // Asking explicitly does move it.
-    const third = saveKey({
+    const third = await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -156,16 +156,16 @@ describe("keystore", () => {
       preferred: true,
     });
     expect(third.preferred).toBe(true);
-    expect(selectKey(userId)?.providerId).toBe("anthropic");
+    expect((await selectKey(userId))?.providerId).toBe("anthropic");
   });
 
-  it("listKeys returns an empty array for a user with no keys", () => {
+  it("listKeys returns an empty array for a user with no keys", async () => {
     expect(listKeys(makeUser("empty@nomad.test"))).toEqual([]);
   });
 
-  it("listKeys never returns ciphertext, iv, tag or salt", () => {
+  it("listKeys never returns ciphertext, iv, tag or salt", async () => {
     const userId = makeUser("redacted@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -192,10 +192,10 @@ describe("keystore", () => {
     expect(serialised).not.toContain("salt");
   });
 
-  it("listKeys is scoped to one user", () => {
+  it("listKeys is scoped to one user", async () => {
     const alice = makeUser("list-alice@nomad.test");
     const bob = makeUser("list-bob@nomad.test");
-    saveKey({
+    await saveKey({
       userId: alice,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -208,14 +208,14 @@ describe("keystore", () => {
     expect(listKeys(bob)).toEqual([]);
   });
 
-  it("deleteKey returns false when nothing was configured", () => {
+  it("deleteKey returns false when nothing was configured", async () => {
     const userId = makeUser("delete-miss@nomad.test");
     expect(deleteKey(userId, "openai")).toBe(false);
   });
 
-  it("deleteKey clears a matching ai_prefs row in the same transaction", () => {
+  it("deleteKey clears a matching ai_prefs row in the same transaction", async () => {
     const userId = makeUser("delete-pref@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -223,7 +223,7 @@ describe("keystore", () => {
       validatedAt: "2026-08-14T10:00:00.000Z",
       preferred: true,
     });
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -243,7 +243,7 @@ describe("keystore", () => {
 
     // Deleting a provider that is not the preferred one leaves the pref alone.
     setPreferred(userId, "openai");
-    saveKey({
+    await saveKey({
       userId,
       provider: "gemini",
       apiKey: GEMINI_KEY,
@@ -261,13 +261,13 @@ describe("keystore", () => {
     ).toBe("openai");
   });
 
-  it("selectKey returns null for a user with no keys", () => {
-    expect(selectKey(makeUser("select-empty@nomad.test"))).toBeNull();
+  it("selectKey returns null for a user with no keys", async () => {
+    expect(await selectKey(makeUser("select-empty@nomad.test"))).toBeNull();
   });
 
-  it("selectKey honours an explicit provider argument", () => {
+  it("selectKey honours an explicit provider argument", async () => {
     const userId = makeUser("select-explicit@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -275,7 +275,7 @@ describe("keystore", () => {
       validatedAt: "2026-08-14T10:00:00.000Z",
       preferred: true,
     });
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -284,18 +284,18 @@ describe("keystore", () => {
       preferred: false,
     });
 
-    expect(selectKey(userId, "openai")).toEqual({
+    expect(await selectKey(userId, "openai")).toEqual({
       providerId: "openai",
       apiKey: OPENAI_KEY,
       model: "gpt-5",
     });
     // An explicit provider the user has not configured does not fall through.
-    expect(selectKey(userId, "gemini")).toBeNull();
+    expect(await selectKey(userId, "gemini")).toBeNull();
   });
 
-  it("selectKey falls back to the stored preference", () => {
+  it("selectKey falls back to the stored preference", async () => {
     const userId = makeUser("select-pref@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -304,7 +304,7 @@ describe("keystore", () => {
       preferred: false,
     });
     // Saved later, so "most recently validated" would pick openai instead.
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -314,12 +314,12 @@ describe("keystore", () => {
     });
     setPreferred(userId, "anthropic");
 
-    expect(selectKey(userId)?.providerId).toBe("anthropic");
+    expect((await selectKey(userId))?.providerId).toBe("anthropic");
   });
 
-  it("selectKey falls back to the most recently validated key", () => {
+  it("selectKey falls back to the most recently validated key", async () => {
     const userId = makeUser("select-recent@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -327,7 +327,7 @@ describe("keystore", () => {
       validatedAt: "2026-08-01T10:00:00.000Z",
       preferred: false,
     });
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -338,12 +338,12 @@ describe("keystore", () => {
     // No preference at all — first-key auto-preference removed.
     db.prepare("DELETE FROM ai_prefs WHERE user_id = ?").run(userId);
 
-    expect(selectKey(userId)?.providerId).toBe("openai");
+    expect((await selectKey(userId))?.providerId).toBe("openai");
   });
 
-  it("selectKey ignores a stored preference whose key row was deleted", () => {
+  it("selectKey ignores a stored preference whose key row was deleted", async () => {
     const userId = makeUser("select-dangling@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -351,7 +351,7 @@ describe("keystore", () => {
       validatedAt: "2026-08-01T10:00:00.000Z",
       preferred: true,
     });
-    saveKey({
+    await saveKey({
       userId,
       provider: "openai",
       apiKey: OPENAI_KEY,
@@ -365,12 +365,12 @@ describe("keystore", () => {
       "anthropic",
     );
 
-    expect(selectKey(userId)?.providerId).toBe("openai");
+    expect((await selectKey(userId))?.providerId).toBe("openai");
   });
 
-  it("selectKey throws provider_error when the stored blob will not decrypt", () => {
+  it("selectKey throws provider_error when the stored blob will not decrypt", async () => {
     const userId = makeUser("select-tampered@nomad.test");
-    saveKey({
+    await saveKey({
       userId,
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
@@ -387,7 +387,7 @@ describe("keystore", () => {
 
     let thrown: unknown;
     try {
-      selectKey(userId);
+      await selectKey(userId);
     } catch (err) {
       thrown = err;
     }
