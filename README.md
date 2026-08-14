@@ -75,6 +75,17 @@ it.
 | `GET /api/calendar/:year/:month` | Day grid, holidays, long weekends, weekend teasers |
 | `GET /api/recommendations?start&end&seed` | Mode-grouped picks for a date range |
 | `GET /api/destinations/:id` | Full destination detail |
+| `POST /api/ai/keys` | Validate an AI API key with its provider, then store it encrypted |
+| `GET /api/ai/keys` | List configured providers — last 4 characters only, never the key |
+| `PUT /api/ai/keys/preferred` | Choose which provider AI features use by default |
+| `DELETE /api/ai/keys/:provider` | Remove a stored key |
+| `GET /api/ai/usage` | Per-feature calls and tokens, with cached calls counted separately |
+
+AI keys are yours: you add your own Anthropic, Gemini or OpenAI key under
+**Profile → AI & Keys**, you pay that provider directly, and the key is
+encrypted with AES-256-GCM before it reaches the database. It is decrypted in
+memory only to make a request you asked for, and never appears in a response, a
+log, or a URL.
 
 ## Docs
 
