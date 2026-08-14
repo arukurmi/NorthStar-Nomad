@@ -14,13 +14,36 @@ const KEY_BYTES = 32;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const SALT_BYTES = 16;
-const MIN_MASTER_KEY_LENGTH = 32;
+const MIN_MASTER_KEY_BYTES = 32;
 const DERIVED_KEY_CACHE_MAX = 64;
 
+/**
+ * Environment variables no developer sets by hand: a platform sets them on the
+ * host it owns. Their presence means this process is deployed — serving real
+ * people's keys — whatever NODE_ENV happens to say. `CI` is deliberately absent:
+ * a CI runner is not a deployed host and its tests need the dev fallback.
+ */
+const DEPLOY_MARKERS = [
+  "RENDER", // Render
+  "K_SERVICE", // Cloud Run / Knative
+  "DYNO", // Heroku
+  "FLY_APP_NAME", // Fly.io
+  "VERCEL", // Vercel
+  "AWS_EXECUTION_ENV", // Lambda / App Runner
+  "KUBERNETES_SERVICE_HOST", // any in-cluster pod
+  "WEBSITE_INSTANCE_ID", // Azure App Service
+] as const;
+
 const MISSING_MSG = "NOMAD_MASTER_KEY is required when NODE_ENV=production.";
-const SHORT_MSG = `NOMAD_MASTER_KEY must be at least ${MIN_MASTER_KEY_LENGTH} characters when NODE_ENV=production.`;
+const WEAK_MSG =
+  `NOMAD_MASTER_KEY must carry at least ${MIN_MASTER_KEY_BYTES} bytes of key ` +
+  "material — it has to decode, as base64 or hex, to that many bytes. A count " +
+  "of characters is not a measure of strength.";
 const DEV_IN_PROD_MSG =
-  "NOMAD_MASTER_KEY is the built-in development key, which is public — refusing to use it when NODE_ENV=production.";
+  "NOMAD_MASTER_KEY contains the built-in development key, which is public — refusing to use it on a production or deployed host.";
+const DEPLOYED_MSG =
+  "NOMAD_MASTER_KEY is required: this looks like a deployed host " +
+  `(${DEPLOY_MARKERS.join(", ")}), so the public built-in development key is refused.`;
 const DEV_WARNING =
   "⚠️  NOMAD_MASTER_KEY is not set — using the built-in DEVELOPMENT key.\n" +
   "   Stored AI keys are readable by anyone with this repo. Never ship this.";
@@ -56,18 +79,54 @@ let devWarningPrinted = false;
  */
 const derivedKeys = new Map<string, Buffer>();
 
+/**
+ * True when a platform marker says this process runs on infrastructure rather
+ * than on a laptop. Used to refuse the public dev key on a host that never set
+ * NODE_ENV — the failure mode that would encrypt real users' keys under a
+ * constant committed to this repository.
+ */
+export function looksDeployed(env: NodeJS.ProcessEnv): boolean {
+  return DEPLOY_MARKERS.some((name) => (env[name] ?? "").trim() !== "");
+}
+
+/**
+ * Bytes of actual key material behind a master key, read as base64 and as hex
+ * and scored on the more generous of the two. `"a".repeat(32)` is 32 characters
+ * and 24 base64 bytes of a single repeated symbol; measuring the decode is what
+ * separates a real `openssl rand -base64 48` value from a padded word.
+ */
+function keyMaterialBytes(raw: string): number {
+  const asBase64 = Buffer.from(raw, "base64").length;
+  const asHex = /^(?:[0-9a-fA-F]{2})+$/.test(raw)
+    ? Buffer.from(raw, "hex").length
+    : 0;
+  return Math.max(asBase64, asHex);
+}
+
 /** Pure, injectable core — this is what the unit tests drive. */
 export function resolveMasterKey(env: NodeJS.ProcessEnv): Buffer {
   const raw = env.NOMAD_MASTER_KEY?.trim();
-  const isProd = env.NODE_ENV === "production";
+  // A deployed host is held to the production bar even if it never set
+  // NODE_ENV — otherwise the fallback below silently seals real keys with a
+  // constant that is public in git.
+  const deployed = looksDeployed(env);
+  const isProd = env.NODE_ENV === "production" || deployed;
 
   if (isProd) {
-    if (!raw) throw new VaultError("master_key_missing", MISSING_MSG);
-    if (raw.length < MIN_MASTER_KEY_LENGTH) {
-      throw new VaultError("master_key_missing", SHORT_MSG);
+    if (!raw) {
+      throw new VaultError(
+        "master_key_missing",
+        deployed && env.NODE_ENV !== "production" ? DEPLOYED_MSG : MISSING_MSG,
+      );
     }
-    if (raw === DEV_MASTER_KEY) {
+    // Containment, not equality: `DEV_MASTER_KEY + "!"` is still the public dev
+    // key with a character stapled on, and it is long enough to pass every
+    // other check.
+    if (raw.toLowerCase().includes(DEV_MASTER_KEY)) {
       throw new VaultError("master_key_missing", DEV_IN_PROD_MSG);
+    }
+    if (keyMaterialBytes(raw) < MIN_MASTER_KEY_BYTES) {
+      throw new VaultError("master_key_missing", WEAK_MSG);
     }
     return Buffer.from(raw, "utf8");
   }

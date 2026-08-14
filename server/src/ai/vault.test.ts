@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { randomBytes } from "node:crypto";
 import {
   DEV_MASTER_KEY,
   VaultError,
   __resetMasterKeyForTests,
   decryptApiKey,
   encryptApiKey,
+  looksDeployed,
   resolveMasterKey,
   type SealedKey,
 } from "./vault.js";
@@ -174,21 +176,63 @@ describe("master key resolution", () => {
     );
   });
 
-  it("throws when the production master key is shorter than 32 characters", () => {
+  it("measures the production master key in decoded bytes, not characters", () => {
+    // 32 characters of one repeated symbol: the old character-count floor
+    // accepted this, and it carries a single byte of entropy.
     expect(
       reasonOf(() =>
         resolveMasterKey({
           NODE_ENV: "production",
-          NOMAD_MASTER_KEY: "a".repeat(31),
+          NOMAD_MASTER_KEY: "a".repeat(32),
         }),
       ),
     ).toBe("master_key_missing");
-    // 32 is the floor, not the first rejected length.
-    const ok = resolveMasterKey({
-      NODE_ENV: "production",
-      NOMAD_MASTER_KEY: "a".repeat(32),
-    });
-    expect(ok.toString("utf8")).toBe("a".repeat(32));
+    expect(() =>
+      resolveMasterKey({ NODE_ENV: "production", NOMAD_MASTER_KEY: "a".repeat(32) }),
+    ).toThrow(/bytes of key material/);
+
+    // A passphrase long enough to look strong but not carrying 32 bytes.
+    expect(
+      reasonOf(() =>
+        resolveMasterKey({
+          NODE_ENV: "production",
+          NOMAD_MASTER_KEY: "correct horse battery staple xyz!",
+        }),
+      ),
+    ).toBe("master_key_missing");
+  });
+
+  it("accepts base64 and hex master keys carrying 32 bytes", () => {
+    // What `openssl rand -base64 48` produces: 64 characters, 48 bytes.
+    const base64 = randomBytes(48).toString("base64");
+    expect(
+      resolveMasterKey({
+        NODE_ENV: "production",
+        NOMAD_MASTER_KEY: base64,
+      }).toString("utf8"),
+    ).toBe(base64);
+
+    // Exactly at the floor: base64 of 32 bytes.
+    const atFloor = randomBytes(32).toString("base64");
+    expect(() =>
+      resolveMasterKey({ NODE_ENV: "production", NOMAD_MASTER_KEY: atFloor }),
+    ).not.toThrow();
+
+    // Hex is read as hex too — 64 hex characters are 32 bytes.
+    const hex = randomBytes(32).toString("hex");
+    expect(() =>
+      resolveMasterKey({ NODE_ENV: "production", NOMAD_MASTER_KEY: hex }),
+    ).not.toThrow();
+
+    // One byte short, as hex.
+    expect(
+      reasonOf(() =>
+        resolveMasterKey({
+          NODE_ENV: "production",
+          NOMAD_MASTER_KEY: randomBytes(20).toString("hex"),
+        }),
+      ),
+    ).toBe("master_key_missing");
   });
 
   it("throws when production is configured with the built-in dev key", () => {
@@ -209,5 +253,76 @@ describe("master key resolution", () => {
         }),
       ),
     ).toBe("master_key_missing");
+  });
+
+  it("rejects a master key that merely contains the dev key", () => {
+    // Exact-match rejection let one appended character through, and the result
+    // is still a public constant plus a character.
+    for (const raw of [
+      `${DEV_MASTER_KEY}!`,
+      `x${DEV_MASTER_KEY}`,
+      `prefix-${DEV_MASTER_KEY}-suffix`,
+      DEV_MASTER_KEY.toUpperCase(),
+    ]) {
+      expect(
+        reasonOf(() =>
+          resolveMasterKey({ NODE_ENV: "production", NOMAD_MASTER_KEY: raw }),
+        ),
+      ).toBe("master_key_missing");
+      expect(() =>
+        resolveMasterKey({ NODE_ENV: "production", NOMAD_MASTER_KEY: raw }),
+      ).toThrow(/built-in development key/);
+    }
+  });
+});
+
+describe("deployed-host detection", () => {
+  it("refuses the dev master key when a platform marker is present", () => {
+    // The production failure this closes: a host that never exported NODE_ENV
+    // would otherwise take the dev branch and seal real keys with a constant
+    // that is public in git.
+    for (const marker of [
+      "RENDER",
+      "K_SERVICE",
+      "DYNO",
+      "FLY_APP_NAME",
+      "VERCEL",
+      "AWS_EXECUTION_ENV",
+      "KUBERNETES_SERVICE_HOST",
+      "WEBSITE_INSTANCE_ID",
+    ]) {
+      expect(looksDeployed({ [marker]: "true" })).toBe(true);
+      expect(reasonOf(() => resolveMasterKey({ [marker]: "true" }))).toBe(
+        "master_key_missing",
+      );
+    }
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("holds a deployed host to the production strength checks", () => {
+    expect(
+      reasonOf(() =>
+        resolveMasterKey({ RENDER: "true", NOMAD_MASTER_KEY: "a".repeat(32) }),
+      ),
+    ).toBe("master_key_missing");
+    expect(
+      reasonOf(() =>
+        resolveMasterKey({ RENDER: "true", NOMAD_MASTER_KEY: DEV_MASTER_KEY }),
+      ),
+    ).toBe("master_key_missing");
+    // A real key on a deployed host is fine.
+    const good = randomBytes(48).toString("base64");
+    expect(
+      resolveMasterKey({ RENDER: "true", NOMAD_MASTER_KEY: good }).toString("utf8"),
+    ).toBe(good);
+  });
+
+  it("does not treat a laptop or a CI runner as deployed", () => {
+    expect(looksDeployed({})).toBe(false);
+    // CI is not a deployed host: its tests need the dev fallback to work.
+    expect(looksDeployed({ CI: "true", NODE_ENV: "test" })).toBe(false);
+    // An empty marker is not a marker.
+    expect(looksDeployed({ RENDER: "" })).toBe(false);
+    expect(resolveMasterKey({ CI: "true" }).toString("utf8")).toBe(DEV_MASTER_KEY);
   });
 });

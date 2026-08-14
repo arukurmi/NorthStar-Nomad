@@ -7,7 +7,15 @@ services:
     startCommand: npm run start --workspace=server
     healthCheckPath: /api/health
     envVars:
+      # Encrypts every user's AI API key at rest. Without it the server falls
+      # back to the built-in DEV master key, which is public in this repo.
+      - key: NOMAD_MASTER_KEY
+        generateValue: true
       - key: JWT_SECRET
         generateValue: true
+      # Explicit, not inherited: the vault's production checks key off this, and
+      # a host that leaves it unset must not get the development code path.
+      - key: NODE_ENV
+        value: production
       - key: NODE_VERSION
         value: "20"
