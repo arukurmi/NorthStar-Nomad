@@ -7,6 +7,7 @@ import { calendarRouter } from "./routes/calendar.js";
 import { recommendationsRouter } from "./routes/recommendations.js";
 import { authRouter } from "./routes/auth.js";
 import { tripsRouter } from "./routes/trips.js";
+import { aiKeysRouter } from "./routes/ai-keys.js";
 
 export function createApp(): Express {
   const app = express();
@@ -21,6 +22,7 @@ export function createApp(): Express {
   app.use(recommendationsRouter);
   app.use(authRouter);
   app.use(tripsRouter);
+  app.use(aiKeysRouter);
 
   // In production the API server also serves the built frontend (SPA).
   const here = path.dirname(fileURLToPath(import.meta.url));
