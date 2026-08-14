@@ -1,0 +1,68 @@
+{
+  "refusal": {
+    "id": "chatcmpl-FixtureRefusal",
+    "object": "chat.completion",
+    "created": 1786000001,
+    "model": "gpt-5",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "refusal": "I'm sorry, I can't help with planning that trip."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 388,
+      "completion_tokens": 14,
+      "total_tokens": 402
+    }
+  },
+  "truncated": {
+    "id": "chatcmpl-FixtureTruncated",
+    "object": "chat.completion",
+    "created": 1786000002,
+    "model": "gpt-5",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "{\"city\":\"Goa\",\"nigh",
+          "refusal": null
+        },
+        "finish_reason": "length"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 388,
+      "completion_tokens": 4096,
+      "total_tokens": 4484
+    }
+  },
+  "notJson": {
+    "id": "chatcmpl-FixtureNotJson",
+    "object": "chat.completion",
+    "created": 1786000003,
+    "model": "gpt-4o-mini",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Sure! Goa for three nights sounds lovely.",
+          "refusal": null
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 388,
+      "completion_tokens": 11,
+      "total_tokens": 399
+    }
+  }
+}

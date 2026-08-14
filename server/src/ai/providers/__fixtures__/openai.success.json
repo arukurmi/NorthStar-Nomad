@@ -1,0 +1,22 @@
+{
+  "id": "chatcmpl-FixtureStructuredOutput",
+  "object": "chat.completion",
+  "created": 1786000000,
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"city\":\"Goa\",\"nights\":3}",
+        "refusal": null
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 388,
+    "completion_tokens": 52,
+    "total_tokens": 440
+  }
+}
