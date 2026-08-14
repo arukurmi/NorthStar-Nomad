@@ -1,0 +1,71 @@
+{
+  "safety": {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [] },
+        "finishReason": "SAFETY",
+        "index": 0,
+        "safetyRatings": [
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "probability": "HIGH",
+            "blocked": true
+          }
+        ]
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 355,
+      "candidatesTokenCount": 0,
+      "totalTokenCount": 355
+    }
+  },
+  "maxTokens": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [{ "text": "{\"city\": \"Goa\", \"nigh" }]
+        },
+        "finishReason": "MAX_TOKENS",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 355,
+      "candidatesTokenCount": 4096,
+      "totalTokenCount": 4451
+    }
+  },
+  "recitation": {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [] },
+        "finishReason": "RECITATION",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 355,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 367
+    }
+  },
+  "notJson": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [{ "text": "Sure! Here is your trip: Goa, three nights." }]
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 355,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 373
+    }
+  }
+}
