@@ -1,0 +1,23 @@
+{
+  "id": "msg_01FixtureToolUse0000000000",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-5",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01FixtureBlock000000000000",
+      "name": "answer",
+      "input": {
+        "city": "Goa",
+        "nights": 3
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 412,
+    "output_tokens": 87
+  }
+}

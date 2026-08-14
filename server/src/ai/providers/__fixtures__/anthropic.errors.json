@@ -1,0 +1,65 @@
+{
+  "authentication": {
+    "type": "error",
+    "error": {
+      "type": "authentication_error",
+      "message": "invalid x-api-key"
+    }
+  },
+  "permission": {
+    "type": "error",
+    "error": {
+      "type": "permission_error",
+      "message": "Your API key does not have permission to use the specified resource."
+    }
+  },
+  "lowCredit": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  },
+  "badRequest": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "tools.0.input_schema: Extra inputs are not permitted"
+    }
+  },
+  "modelNotFound": {
+    "type": "error",
+    "error": {
+      "type": "not_found_error",
+      "message": "model: claude-sonnet-5-does-not-exist"
+    }
+  },
+  "rateLimited": {
+    "type": "error",
+    "error": {
+      "type": "rate_limit_error",
+      "message": "Number of request tokens has exceeded your per-minute rate limit."
+    }
+  },
+  "overloaded": {
+    "type": "error",
+    "error": {
+      "type": "overloaded_error",
+      "message": "Overloaded"
+    }
+  },
+  "serverError": {
+    "type": "error",
+    "error": {
+      "type": "api_error",
+      "message": "Internal server error"
+    }
+  },
+  "echoesRequestHeaders": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "could not parse request: {\"headers\":{\"x-api-key\":\"sk-ant-api03-LEAKCANARY-7f3a9c2e5b1d8046a2c9\",\"anthropic-version\":\"2023-06-01\"}}"
+    }
+  }
+}
