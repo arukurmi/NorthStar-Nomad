@@ -39,24 +39,30 @@ Development needs none of these — every one has a working default.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `NOMAD_MASTER_KEY` | built-in dev key; **required in production** | Encrypts each user's AI API key at rest (AES-256-GCM). Must be at least 32 characters. |
+| `NOMAD_MASTER_KEY` | built-in dev key; **required in production** | Encrypts each user's AI API key at rest (AES-256-GCM). Must decode, as base64 or hex, to at least 32 bytes. |
 | `NOMAD_DB` | `data.sqlite` (`:memory:` under `NODE_ENV=test`) | Path to the SQLite file. |
-| `JWT_SECRET` | built-in dev secret | Signs session tokens. Change it in production. |
+| `JWT_SECRET` | built-in dev secret; **required in production** | Signs session tokens. At least 32 characters, and never the built-in value. |
+| `NOMAD_WEB_ORIGIN` | none in production, permissive in development | Comma-separated origins allowed to call the API cross-origin. |
 | `PORT` | `4000` | Port the API listens on. |
 
-**`NOMAD_MASTER_KEY` is a hard requirement in production.** Without it — or with
-one under 32 characters, or set to the built-in development key — the server
+**`NOMAD_MASTER_KEY` and `JWT_SECRET` are hard requirements in production.**
+Missing, too weak, or containing the built-in development value, the server
 writes an explanation to stderr and exits 1 before binding a port, rather than
-accepting API keys it can only store badly. Generate one with:
+accepting API keys it can only store badly or sessions anyone could forge.
+Generate each with:
 
 ```bash
 openssl rand -base64 48
 ```
 
-Outside production it falls back to a development key that is committed to this
-repo and prints a warning saying so. Anything encrypted under that key is
+Strength is measured in decoded bytes, not characters: `"a"` repeated 32 times
+is 32 characters and one byte of entropy, and is rejected.
+
+Outside production both fall back to values that are committed to this repo, and
+the master key prints a warning saying so. Anything encrypted under that key is
 readable by anyone who can clone this project, which is why production refuses
-it.
+it — as does any host carrying a platform marker such as `RENDER` or
+`K_SERVICE`, even if `NODE_ENV` was never set.
 
 ## Stack
 
