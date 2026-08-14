@@ -33,11 +33,37 @@ Open http://localhost:5173. Backend and frontend live in separate folders
 (`server/` and `web/`); `npm run dev:server` / `npm run dev:web` run them
 individually.
 
+## Environment
+
+Development needs none of these — every one has a working default.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `NOMAD_MASTER_KEY` | built-in dev key; **required in production** | Encrypts each user's AI API key at rest (AES-256-GCM). Must be at least 32 characters. |
+| `NOMAD_DB` | `data.sqlite` (`:memory:` under `NODE_ENV=test`) | Path to the SQLite file. |
+| `JWT_SECRET` | built-in dev secret | Signs session tokens. Change it in production. |
+| `PORT` | `4000` | Port the API listens on. |
+
+**`NOMAD_MASTER_KEY` is a hard requirement in production.** Without it — or with
+one under 32 characters, or set to the built-in development key — the server
+writes an explanation to stderr and exits 1 before binding a port, rather than
+accepting API keys it can only store badly. Generate one with:
+
+```bash
+openssl rand -base64 48
+```
+
+Outside production it falls back to a development key that is committed to this
+repo and prints a warning saying so. Anything encrypted under that key is
+readable by anyone who can clone this project, which is why production refuses
+it.
+
 ## Stack
 
-- **server/** — Node 20, Express, TypeScript. No database: the destination
-  dataset, holidays, and scoring engine are all versioned in git. Vitest +
-  supertest (60 tests).
+- **server/** — Node 20, Express, TypeScript. SQLite via better-sqlite3 (WAL)
+  for accounts, trips, and encrypted AI keys; the destination dataset,
+  holidays, and scoring engine are versioned in git rather than seeded into a
+  table. Vitest + supertest.
 - **web/** — React 18, Vite, Tailwind. No images: every destination hero is a
   CSS gradient. Night-sky design system (Bricolage Grotesque / Instrument
   Sans / Space Grotesk).
