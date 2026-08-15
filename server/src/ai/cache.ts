@@ -105,6 +105,64 @@ export function getCached<T>(
   return { payload: JSON.parse(row.payload) as T, createdAt: row.createdAt };
 }
 
-export function putCached<T>(key: string, feature: AiFeature, payload: T): void {
-  upsertEntry.run(key, feature, JSON.stringify(payload));
+/**
+ * `ORDER BY created_at DESC, cache_key DESC` — the tie-break is not cosmetic.
+ * `datetime('now')` has one-second resolution, so a burst of writes inside one
+ * second leaves SQLite free to pick any order, and the sweep can then evict the
+ * row it has just written. The secondary sort makes the survivor set a pure
+ * function of the table's contents.
+ *
+ * Driven by idx_ai_cache_feature(feature, created_at), which already existed.
+ */
+const evictOldest = db.prepare(`
+  DELETE FROM ai_cache
+   WHERE feature = ?
+     AND cache_key NOT IN (
+           SELECT cache_key FROM ai_cache
+            WHERE feature = ?
+            ORDER BY created_at DESC, cache_key DESC
+            LIMIT ?
+         )
+`);
+
+/**
+ * Trims one feature's rows to the `keep` most recently written, returning how
+ * many were removed.
+ *
+ * Least-recently-*written*, not least-recently-used. True LRU needs a
+ * `last_read_at` column, which means an ALTER TABLE in a repo with no migration
+ * runner and — worse — turns every cache read into a write. `getCached` would
+ * stop being idempotent, which is a nasty property for something tests call in
+ * a loop. Age-based expiry is `getCached`'s `maxAgeMs`; this bound is about
+ * space, and for space, write recency is a fine proxy.
+ */
+export function evictFeature(feature: AiFeature, keep: number): number {
+  return evictOldest.run(feature, feature, keep).changes;
 }
+
+/**
+ * `keep` omitted means no sweep at all, so callers written before eviction
+ * existed behave exactly as they did.
+ */
+export function putCached<T>(
+  key: string,
+  feature: AiFeature,
+  payload: T,
+  opts?: { keep?: number },
+): void {
+  const keep = opts?.keep;
+  if (keep === undefined) {
+    upsertEntry.run(key, feature, JSON.stringify(payload));
+    return;
+  }
+  // One transaction, so a concurrent WAL reader never observes the table
+  // between the insert and the sweep.
+  writeThenEvict(key, feature, JSON.stringify(payload), keep);
+}
+
+const writeThenEvict = db.transaction(
+  (key: string, feature: AiFeature, payload: string, keep: number) => {
+    upsertEntry.run(key, feature, payload);
+    evictOldest.run(feature, feature, keep);
+  },
+);
