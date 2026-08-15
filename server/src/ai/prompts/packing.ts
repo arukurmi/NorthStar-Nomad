@@ -34,7 +34,8 @@ export const PACKING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  * completions billed to their own key, and the route's per-user throttle
  * bounds the rate, but it is not eliminated. Doing better needs a per-caller
  * partition, which needs a column, which needs a migration runner this repo
- * does not have. Recorded in docs/THREAT-MODEL.md rather than left implicit.
+ * does not have. Recorded in the F2 LLD §2.2, and carried into
+ * docs/THREAT-MODEL.md once F2's phases are complete.
  */
 export const PACKING_CACHE_LIMIT = 2000;
 

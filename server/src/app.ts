@@ -11,6 +11,7 @@ import { recommendationsRouter } from "./routes/recommendations.js";
 import { authRouter } from "./routes/auth.js";
 import { tripsRouter } from "./routes/trips.js";
 import { aiKeysRouter } from "./routes/ai-keys.js";
+import { aiPackingRouter } from "./routes/ai-packing.js";
 
 /**
  * `cors()` with no arguments answers `Access-Control-Allow-Origin: *`, which
@@ -96,6 +97,7 @@ export function createApp(): Express {
   app.use(authRouter);
   app.use(tripsRouter);
   app.use(aiKeysRouter);
+  app.use(aiPackingRouter);
 
   // In production the API server also serves the built frontend (SPA).
   const here = path.dirname(fileURLToPath(import.meta.url));

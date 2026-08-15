@@ -322,3 +322,31 @@ describe("ai_cache eviction", () => {
     expect(countRows("packing")).toBe(13);
   });
 });
+
+describe("CacheEntry.createdAt", () => {
+  it("is ISO-8601 with a zone marker, not the raw column value", () => {
+    // datetime('now') writes "YYYY-MM-DD HH:MM:SS" in UTC with no marker, which
+    // a browser reads as local time — so a list generated a minute ago would
+    // read as hours old for every user not on UTC. Normalising here means each
+    // feature route cannot rediscover the problem separately.
+    const key = keyFor("packing", "iso-shape");
+    putCached(key, "packing", { ok: true });
+
+    const entry = getCached(key);
+    expect(entry?.createdAt).toMatch(/Z$/);
+    expect(entry?.createdAt).not.toContain(" ");
+    expect(Math.abs(Date.now() - Date.parse(entry!.createdAt))).toBeLessThan(
+      60_000,
+    );
+  });
+
+  it("treats an unparseable timestamp as a miss rather than throwing", () => {
+    const key = keyFor("packing", "broken-time");
+    putCached(key, "packing", { ok: true });
+    db.prepare("UPDATE ai_cache SET created_at = ? WHERE cache_key = ?").run(
+      "not-a-timestamp",
+      key,
+    );
+    expect(getCached(key)).toBeNull();
+  });
+});
