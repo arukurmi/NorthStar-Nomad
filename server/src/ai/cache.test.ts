@@ -70,6 +70,42 @@ describe("cacheKey", () => {
     expect(alice).toBe(bob);
   });
 
+  it("produces a different key when the provider changes", () => {
+    // The reason this field exists: without it, an answer produced by one
+    // vendor's model is served verbatim to a user who configured another.
+    const anthropic = cacheKey({ ...GOA_TRIP, provider: "anthropic" });
+    const openai = cacheKey({ ...GOA_TRIP, provider: "openai" });
+    const gemini = cacheKey({ ...GOA_TRIP, provider: "gemini" });
+    expect(new Set([anthropic, openai, gemini]).size).toBe(3);
+  });
+
+  it("hashes an input without a provider exactly as it did before the field existed", () => {
+    // `canonical` strips undefined before hashing, so an absent provider is
+    // absent from the digest. This is what let every assertion in this file
+    // survive the change unedited — and it is worth an explicit test, because
+    // the day it stops being true, every stored row silently misses.
+    expect(cacheKey({ ...GOA_TRIP, provider: undefined })).toBe(
+      cacheKey(GOA_TRIP),
+    );
+    expect(cacheKey(GOA_TRIP)).toBe(
+      // Computed against the pre-provider implementation and pinned here.
+      "99fc3953915172462dfd21fa93b50072063016a6dd07d4ade3c72d74c4ca6887",
+    );
+  });
+
+  it("does not let a model string forge a provider boundary", () => {
+    // Every value goes through JSON.stringify inside `canonical`, so no
+    // amount of punctuation in a user-chosen model id can fake a delimiter
+    // and make one provider's row answer for another's.
+    const forged = cacheKey({
+      ...GOA_TRIP,
+      model: 'claude-sonnet-5","provider":"openai',
+      provider: "anthropic",
+    });
+    expect(forged).not.toBe(cacheKey({ ...GOA_TRIP, provider: "openai" }));
+    expect(forged).not.toBe(cacheKey({ ...GOA_TRIP, provider: "anthropic" }));
+  });
+
   it("ignores a user id smuggled onto the input at runtime", () => {
     // The type forbids it, but types are gone at runtime. cacheKey projects
     // its fields explicitly, so an extra property cannot reach the hash.
