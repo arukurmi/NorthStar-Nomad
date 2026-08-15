@@ -823,3 +823,74 @@ describe("PACKING_SCHEMA", () => {
     expect(serialised).not.toContain("modeCategory");
   });
 });
+
+describe("parsePackingList hardening", () => {
+  it("rejects two categories sharing a name", () => {
+    // Not tidiness. readStoredList groups the persisted rows by category, so
+    // two "Gear" sections rehydrate as one after a reload and the list the
+    // user sees stops matching the list that was generated.
+    expectRejected(
+      (list) => {
+        categoryAt(list, 1).name = "Clothing";
+      },
+      "duplicate_item",
+      "categories[1].name",
+    );
+  });
+
+  it("rejects two categories both carrying the dictated mode heading", () => {
+    // Both would be flagged modeCategory, contradicting "exactly one section
+    // is expanded by default".
+    // Index 3 already carries the heading, so renaming index 2 onto it makes
+    // index 3 the second occurrence — which is where the failure is reported.
+    expectRejected(
+      (list) => {
+        categoryAt(list, 2).name = MODE_CATEGORY_TITLE.bike;
+      },
+      "duplicate_item",
+      "categories[3].name",
+    );
+  });
+
+  it("reads own properties only, not inherited ones", () => {
+    // JSON.parse never writes to a prototype, so this is not exploitable
+    // today — but the module claims a structural guarantee, and a plain
+    // host[key] would resolve a polluted Object.prototype.summary and cache
+    // the result globally.
+    const polluted = Object.create({
+      summary: "inherited summary",
+      categories: [],
+    }) as Record<string, unknown>;
+    const err = shapeFailure(polluted);
+    expect({ reason: err.reason, path: err.path }).toEqual({
+      reason: "missing_field",
+      path: "summary",
+    });
+  });
+
+  it("collapses a diacritic to the same key as its unaccented spelling", () => {
+    // Combining marks are stripped after NFKD. Left in place, the decomposed
+    // mark becomes a separator mid-word — "Naïve" → nai-ve, "Naive" → naive —
+    // which is exactly the drift item keys exist to survive.
+    expect(itemKeyFor("Gear", "Naïve")).toBe(itemKeyFor("Gear", "Naive"));
+    expect(itemKeyFor("Clothing", "Rain liners")).toBe(
+      itemKeyFor("Clothing", "Ráin liners"),
+    );
+  });
+
+  it("keeps two non-Latin labels distinct instead of colliding on an empty slug", () => {
+    // Without the fallback both slug to "", so they share one key, the parser
+    // calls it a duplicate, and valid model output becomes a 502.
+    const a = itemKeyFor("Clothing", "थर्मल");
+    const b = itemKeyFor("Clothing", "दस्ताने");
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+    expect(b).toMatch(/^[0-9a-f]{16}$/);
+
+    const list = broken((raw) => {
+      itemAt(raw, 0, 0).label = "थर्मल";
+      itemAt(raw, 0, 1).label = "दस्ताने";
+    });
+    expect(() => parsePackingList(list, "bike")).not.toThrow();
+  });
+});

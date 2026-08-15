@@ -150,12 +150,31 @@ const ITEMS_MAX = 8;
 const QTY_MIN = 1;
 const QTY_MAX = 20;
 
+/**
+ * Two details here are not cosmetic.
+ *
+ * Combining marks are stripped after NFKD rather than left to fall through the
+ * character class. Without that, "Naive" slugs to `naive` and "Naïve" slugs to
+ * `nai-ve` — the decomposed diaeresis becomes a separator mid-word — so exactly
+ * the cosmetic drift this function exists to collapse would survive it.
+ *
+ * A label with no ASCII alphanumerics at all (a Devanagari or Cyrillic label)
+ * would otherwise slug to the empty string, making every such label in one
+ * category collide and turning valid model output into a `duplicate_item`
+ * rejection and a 502. The fallback keeps them distinct.
+ *
+ * The `-+` passes are linear rather than quadratic only because the class
+ * replace immediately above has already collapsed every run to one character.
+ * The two lines are coupled; do not reorder them.
+ */
 function slug(value: string): string {
-  return value
+  const ascii = value
     .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+  return ascii === "" ? value.normalize("NFKC").toLowerCase().trim() : ascii;
 }
 
 /**
@@ -179,6 +198,18 @@ export function itemKeyFor(categoryName: string, label: string): string {
     .slice(0, 16);
 }
 
+/**
+ * Reads an own property only. Model output arrives through `JSON.parse`, which
+ * never writes to a prototype, so this is not exploitable today — but the
+ * module's claim is a *structural* guarantee, and a plain `host[key]` walks the
+ * prototype chain. If anything else in the process ever polluted
+ * `Object.prototype.summary`, a model returning `{}` would validate against the
+ * polluted value and that value would be cached globally.
+ */
+function own(host: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(host, key) ? host[key] : undefined;
+}
+
 function asObject(value: unknown, path: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new PackingShapeError("not_object", path);
@@ -194,7 +225,7 @@ function requireString(
   key: string,
   path: string,
 ): string {
-  const raw = host[key];
+  const raw = own(host, key);
   if (raw === undefined) throw new PackingShapeError("missing_field", path);
   if (typeof raw !== "string") throw new PackingShapeError("wrong_type", path);
   return raw;
@@ -219,7 +250,7 @@ function requireArray(
   min: number,
   max: number,
 ): unknown[] {
-  const raw = host[key];
+  const raw = own(host, key);
   if (raw === undefined) throw new PackingShapeError("missing_field", path);
   if (!Array.isArray(raw)) throw new PackingShapeError("wrong_type", path);
   if (raw.length < min || raw.length > max) {
@@ -229,7 +260,7 @@ function requireArray(
 }
 
 function parseQty(host: Record<string, unknown>, path: string): number {
-  const raw = host["qty"];
+  const raw = own(host, "qty");
   if (raw === undefined) throw new PackingShapeError("missing_field", path);
   if (typeof raw !== "number" || !Number.isInteger(raw)) {
     throw new PackingShapeError("wrong_type", path);
@@ -251,7 +282,7 @@ function parseReason(
   host: Record<string, unknown>,
   path: string,
 ): string | undefined {
-  const raw = host["reason"];
+  const raw = own(host, "reason");
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string") throw new PackingShapeError("wrong_type", path);
   const trimmed = raw.trim();
@@ -289,6 +320,15 @@ export function parsePackingList(value: unknown, mode: TravelMode): PackingList 
   // Two checkboxes sharing one tick is worse than a retry, so a repeated key
   // anywhere in the list is a hard failure rather than a silent merge.
   const seenKeys = new Set<string>();
+  /**
+   * Category names must be unique too, and not for tidiness. `readStoredList`
+   * groups the persisted rows by `category`, so two categories called "Gear"
+   * rehydrate as one after a reload and the list the user sees stops matching
+   * the list that was generated. Two both titled with the mode heading would
+   * also both be flagged `modeCategory`, contradicting "exactly one section is
+   * expanded".
+   */
+  const seenCategories = new Set<string>();
   const categories: PackingCategory[] = [];
 
   for (let i = 0; i < rawCategories.length; i += 1) {
@@ -300,6 +340,11 @@ export function parsePackingList(value: unknown, mode: TravelMode): PackingList 
       `${categoryPath}.name`,
       CATEGORY_NAME_MAX,
     );
+    if (seenCategories.has(name)) {
+      throw new PackingShapeError("duplicate_item", `${categoryPath}.name`);
+    }
+    seenCategories.add(name);
+
     const itemsPath = `${categoryPath}.items`;
     const rawItems = requireArray(
       rawCategory,
