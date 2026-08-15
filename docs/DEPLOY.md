@@ -33,9 +33,27 @@ npm run start --workspace=server   # serves app + API on :4000
 
 | Var | Purpose | Default |
 | --- | --- | --- |
-| `JWT_SECRET` | Signs auth tokens — set a strong value in prod | dev fallback |
+| `NOMAD_MASTER_KEY` | Encrypts every user's AI API key at rest (AES-256-GCM). **Required in production** — the server refuses to boot without it. Must carry ≥ 32 bytes of key material: `openssl rand -base64 48`. | public dev key, non-production only |
+| `JWT_SECRET` | Signs auth tokens. **Required in production** — the server refuses to boot without it, or with the built-in dev value. `openssl rand -base64 48`. | dev fallback, non-production only |
+| `NODE_ENV` | `production` on any deployed host. Selects the strict boot checks and the file-backed SQLite database. | unset (development) |
+| `NOMAD_WEB_ORIGIN` | Comma-separated origins allowed to call the API cross-origin. Not needed when this service also serves `web/dist`. | none in production, permissive in dev |
 | `PORT` | Listen port | 4000 |
 | `NOMAD_DB` | SQLite file path | `data.sqlite` |
+
+`render.yaml` sets `NOMAD_MASTER_KEY` and `JWT_SECRET` with `generateValue: true`,
+so Render generates both on first provision and never shows them in the repo.
+**Rotating `NOMAD_MASTER_KEY` makes every stored AI key permanently unreadable**
+— there is no re-encryption tooling. See `docs/THREAT-MODEL.md`.
+
+Two things are deliberately fatal rather than degraded:
+
+- A production process without a usable `NOMAD_MASTER_KEY` would encrypt real
+  users' keys under a constant that is published in this repository.
+- A production process without a usable `JWT_SECRET` would accept session tokens
+  anyone could forge, which reaches those same keys.
+
+Both are also refused when a platform marker (`RENDER`, `K_SERVICE`, `DYNO`,
+`FLY_APP_NAME`, …) is present, even if `NODE_ENV` was never set.
 
 ## Why not Vercel?
 

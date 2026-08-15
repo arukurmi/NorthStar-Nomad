@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth, type Trip } from "../lib/auth";
 import { todayIso } from "../lib/dates";
+import { AiKeysSection } from "../components/Ai/AiKeysSection";
 
 const MODE_EMOJI = { flight: "✈️", bike: "🏍️", bus: "🚌" } as const;
 
@@ -136,6 +137,8 @@ export function ProfilePage() {
           Sign out
         </button>
       </div>
+
+      <AiKeysSection />
 
       {awaiting.length > 0 && (
         <section className="mt-8">

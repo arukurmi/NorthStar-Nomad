@@ -1,0 +1,89 @@
+{
+  "apiKeyNotValid": {
+    "error": {
+      "code": 400,
+      "message": "API key not valid. Please pass a valid API key.",
+      "status": "INVALID_ARGUMENT",
+      "details": [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          "reason": "API_KEY_INVALID",
+          "domain": "googleapis.com"
+        }
+      ]
+    }
+  },
+  "invalidArgument": {
+    "error": {
+      "code": 400,
+      "message": "Invalid JSON payload received. Unknown name \"minItems\" at 'generation_config.response_schema'.",
+      "status": "INVALID_ARGUMENT"
+    }
+  },
+  "permissionDenied": {
+    "error": {
+      "code": 403,
+      "message": "Generative Language API has not been used in project 000000 before or it is disabled.",
+      "status": "PERMISSION_DENIED"
+    }
+  },
+  "unauthenticated": {
+    "error": {
+      "code": 401,
+      "message": "Request had invalid authentication credentials.",
+      "status": "UNAUTHENTICATED"
+    }
+  },
+  "quotaBilling": {
+    "error": {
+      "code": 429,
+      "message": "You exceeded your current quota. Gemini 2.5 Pro is not available on the free tier — enable billing on your project to continue.",
+      "status": "RESOURCE_EXHAUSTED"
+    }
+  },
+  "rateLimited": {
+    "error": {
+      "code": 429,
+      "message": "Resource has been exhausted (e.g. check quota).",
+      "status": "RESOURCE_EXHAUSTED",
+      "details": [
+        {
+          "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+          "violations": [{ "quotaMetric": "generate_content_requests" }]
+        },
+        {
+          "@type": "type.googleapis.com/google.rpc.RetryInfo",
+          "retryDelay": "27s"
+        }
+      ]
+    }
+  },
+  "notFound": {
+    "error": {
+      "code": 404,
+      "message": "models/gemini-2.5-pro-does-not-exist is not found for API version v1beta.",
+      "status": "NOT_FOUND"
+    }
+  },
+  "unavailable": {
+    "error": {
+      "code": 503,
+      "message": "The model is overloaded. Please try again later.",
+      "status": "UNAVAILABLE"
+    }
+  },
+  "internal": {
+    "error": {
+      "code": 500,
+      "message": "An internal error has occurred.",
+      "status": "INTERNAL"
+    }
+  },
+  "echoesRequestHeaders": {
+    "error": {
+      "code": 400,
+      "message": "Request contains an invalid argument: {\"headers\":{\"x-goog-api-key\":\"AIzaLEAKCANARY7f3a9c2e5b1d8046a2c9zzzz\"}}",
+      "status": "INVALID_ARGUMENT"
+    }
+  }
+}
