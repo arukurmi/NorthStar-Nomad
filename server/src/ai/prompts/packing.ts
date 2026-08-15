@@ -39,6 +39,15 @@ export const PACKING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const PACKING_CACHE_LIMIT = 2000;
 
 /**
+ * The longest range this module will ground, matching the route's own bound.
+ * It is repeated here rather than imported because `buildGrounding` must be
+ * safe to call from anywhere, including a test — a day-by-day walk over a
+ * caller-supplied range is otherwise an unbounded loop.
+ */
+export const MAX_SPAN_DAYS = 30;
+const MAX_SPAN_MS = (MAX_SPAN_DAYS - 1) * 24 * 60 * 60 * 1000;
+
+/**
  * Hardcoded rather than derived from `toLocaleString`, which depends on the
  * host's ICU build and would make the committed fixtures machine-specific.
  */
@@ -112,9 +121,36 @@ export function buildGrounding(
   end: string,
   mode: TravelMode,
 ): PackingGrounding {
-  const monthIndexes: number[] = [];
   const cursor = new Date(`${start}T00:00:00Z`);
   const last = new Date(`${end}T00:00:00Z`);
+
+  // The route validates all of this first, so none of these should ever fire.
+  // They exist because the failure mode without them is not an exception — it
+  // is a *prompt*. An unparseable date leaves the loop never entering, `covered`
+  // empty, and Math.min of nothing is Infinity: the model is then told "Coldest
+  // low: Infinity °C" and answers confidently. A throw here is a 502 the user
+  // can retry; a poisoned prompt is a wrong answer cached globally for 30 days.
+  // A NaN check alone is not enough, and this is the surprising part: V8 parses
+  // "2026-02-30T00:00:00Z" as 2 March rather than rejecting it. Left unchecked,
+  // a February request would be grounded and cached against March's weather —
+  // a wrong answer rather than a loud one. The round-trip is the only cheap way
+  // to tell "a real date" from "a date that rolled over".
+  if (
+    Number.isNaN(cursor.getTime()) ||
+    Number.isNaN(last.getTime()) ||
+    cursor.toISOString().slice(0, 10) !== start ||
+    last.toISOString().slice(0, 10) !== end
+  ) {
+    throw new RangeError("buildGrounding: start and end must be real dates");
+  }
+  if (cursor > last) {
+    throw new RangeError("buildGrounding: start must not be after end");
+  }
+  if (last.getTime() - cursor.getTime() > MAX_SPAN_MS) {
+    throw new RangeError(`buildGrounding: range exceeds ${MAX_SPAN_DAYS} days`);
+  }
+
+  const monthIndexes: number[] = [];
   let days = 0;
 
   while (cursor <= last) {
@@ -125,6 +161,13 @@ export function buildGrounding(
   }
 
   const covered = monthIndexes.map((m) => dest.weather[m]);
+  // A catalogue row with a short `weather` array would otherwise put
+  // "undefined" straight into a weather line and Infinity into the temps.
+  if (covered.some((w) => w === undefined)) {
+    throw new RangeError(
+      `buildGrounding: ${dest.id} has no weather for every covered month`,
+    );
+  }
 
   return {
     destinationName: dest.name,

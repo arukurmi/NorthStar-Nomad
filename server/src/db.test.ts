@@ -125,8 +125,16 @@ describe("ai schema", () => {
     expect(() =>
       insert.run(tripId, "bbbbbbbbbbbbbbbb", "Gear", "Tool kit", 1, 2),
     ).toThrow(/CHECK constraint failed/i);
+    // The upper bound mirrors parsePackingList's, so a value the validator
+    // would reject cannot reach the table through some other path either.
+    expect(() =>
+      insert.run(tripId, "dddddddddddddddd", "Gear", "Tool kit", 21, 0),
+    ).toThrow(/CHECK constraint failed/i);
     expect(() =>
       insert.run(tripId, "cccccccccccccccc", "Gear", "Tool kit", 1, 1),
+    ).not.toThrow();
+    expect(() =>
+      insert.run(tripId, "eeeeeeeeeeeeeeee", "Gear", "Tool kit", 20, 1),
     ).not.toThrow();
   });
 

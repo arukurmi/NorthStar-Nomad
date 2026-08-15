@@ -288,3 +288,53 @@ describe("international versus domestic documents", () => {
     expect(prompt).not.toMatch(/international trip/i);
   });
 });
+
+describe("buildGrounding refuses ranges it cannot ground", () => {
+  // These throw rather than degrade, and the reason is worth stating: without
+  // them the failure is not an exception, it is a *prompt*. An unparseable
+  // date leaves the day-walk never entering, so `covered` is empty and
+  // Math.min of nothing is Infinity — the model is handed "Coldest low:
+  // Infinity °C", answers confidently, and that answer is cached globally for
+  // thirty days. A throw is a 502 the user can retry.
+  it("rejects a date that is not a real calendar date", () => {
+    // V8 parses "2026-02-30T00:00:00Z" as 2 March rather than rejecting it, so
+    // a NaN check alone would let a February request be grounded and cached
+    // against March's weather. Only the ISO round-trip catches that.
+    expect(() => buildGrounding(GOA, "2026-02-30", "2026-03-02", "flight")).toThrow(
+      RangeError,
+    );
+    expect(() => buildGrounding(GOA, "not-a-date", "2026-03-02", "flight")).toThrow(
+      RangeError,
+    );
+    expect(() => buildGrounding(GOA, "2026-03-01", "2026-04-31", "flight")).toThrow(
+      RangeError,
+    );
+  });
+
+  it("rejects a reversed range", () => {
+    expect(() => buildGrounding(GOA, "2026-03-10", "2026-03-02", "flight")).toThrow(
+      RangeError,
+    );
+  });
+
+  it("rejects a range longer than the supported span", () => {
+    // Unbounded, the day-by-day walk is a loop a caller controls the length of.
+    expect(() => buildGrounding(GOA, "2026-01-01", "2027-01-01", "flight")).toThrow(
+      RangeError,
+    );
+    // The boundary itself is fine: 30 days counting both dates.
+    expect(() =>
+      buildGrounding(GOA, "2026-01-01", "2026-01-30", "flight"),
+    ).not.toThrow();
+    expect(buildGrounding(GOA, "2026-01-01", "2026-01-30", "flight").days).toBe(30);
+  });
+
+  it("never renders a non-finite temperature into a prompt", () => {
+    const prompt = packingUserPrompt(
+      buildGrounding(GOA, "2026-06-28", "2026-07-02", "bike"),
+    );
+    expect(prompt).not.toContain("Infinity");
+    expect(prompt).not.toContain("NaN");
+    expect(prompt).not.toContain("undefined");
+  });
+});

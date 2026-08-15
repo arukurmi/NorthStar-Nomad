@@ -84,7 +84,9 @@ db.exec(`
     item_key   TEXT    NOT NULL,
     category   TEXT    NOT NULL,
     label      TEXT    NOT NULL,
-    qty        INTEGER NOT NULL DEFAULT 1 CHECK (qty >= 1),
+    -- Upper bound mirrors parsePackingList's, so the table and the validator
+    -- cannot drift into disagreeing about what a legal quantity is.
+    qty        INTEGER NOT NULL DEFAULT 1 CHECK (qty BETWEEN 1 AND 20),
     reason     TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     checked    INTEGER NOT NULL DEFAULT 0 CHECK (checked IN (0, 1)),
