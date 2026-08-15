@@ -46,10 +46,12 @@ const OWNED_TRIP = "(SELECT id FROM trips WHERE id = ? AND user_id = ?)";
 
 /**
  * Matches on the whole tuple. `ORDER BY id LIMIT 1` is explicit rather than
- * relying on insertion order: `trips` only rejects duplicates on
- * `(user_id, destination_id, start)`, so a differing `end` or `mode` can leave
- * more than one row matching, and which trip a tick lands on must not depend on
- * how SQLite chose to walk the table.
+ * relying on insertion order, and the reason is stronger than it first looks:
+ * `trips` carries **no** unique constraint at all. The only duplicate check is
+ * route logic in `trips.ts` on `(user_id, destination_id, start)`, so anything
+ * writing rows another way — a future import, a fixture, a repair script — can
+ * leave two identical trips behind. Which one a user's ticks land on must not
+ * depend on how SQLite chose to walk the table.
  */
 const selectOwnedTrip = db.prepare(`
   SELECT id FROM trips
