@@ -1,6 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { db } from "../db.js";
-import { cacheKey, getCached, putCached, type CacheKeyInput } from "./cache.js";
+import {
+  cacheKey,
+  evictFeature,
+  getCached,
+  putCached,
+  type CacheKeyInput,
+} from "./cache.js";
 
 const GOA_TRIP: CacheKeyInput = {
   feature: "itinerary",
@@ -173,5 +179,102 @@ describe("ai_cache round trip", () => {
     expect(getCached<typeof payload>(key)?.payload).toEqual(payload);
     // The caller's object is untouched.
     expect(JSON.stringify(payload)).toBe(before);
+  });
+});
+
+describe("ai_cache eviction", () => {
+  // The database is shared across this file, and these tests assert exact row
+  // counts, so each one starts from a clean slate for the features it uses.
+  beforeEach(() => {
+    db.prepare(
+      "DELETE FROM ai_cache WHERE feature IN ('packing', 'search')",
+    ).run();
+  });
+
+  function seed(feature: "packing" | "search", n: number): string[] {
+    const keys: string[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const key = cacheKey({ feature, model: `evict-${feature}-${i}` });
+      putCached(key, feature, { i });
+      keys.push(key);
+    }
+    return keys;
+  }
+
+  function countRows(feature: string): number {
+    return (
+      db
+        .prepare("SELECT COUNT(*) AS n FROM ai_cache WHERE feature = ?")
+        .get(feature) as { n: number }
+    ).n;
+  }
+
+  it("keeps the newest N rows and reports how many it removed", () => {
+    const keys = seed("packing", 5);
+    // Ages are set explicitly: datetime('now') is second-resolution, so five
+    // writes in a loop would otherwise share a timestamp.
+    keys.forEach((key, i) => {
+      db.prepare(
+        "UPDATE ai_cache SET created_at = datetime('now', ?) WHERE cache_key = ?",
+      ).run(`-${5 - i} minutes`, key);
+    });
+
+    expect(evictFeature("packing", 3)).toBe(2);
+    expect(countRows("packing")).toBe(3);
+    expect(getCached(keys[0])).toBeNull();
+    expect(getCached(keys[1])).toBeNull();
+    expect(getCached(keys[4])).not.toBeNull();
+  });
+
+  it("evicts only the named feature", () => {
+    seed("packing", 4);
+    const others = seed("search", 3);
+    evictFeature("packing", 1);
+    expect(countRows("packing")).toBe(1);
+    expect(countRows("search")).toBe(3);
+    for (const key of others) expect(getCached(key)).not.toBeNull();
+  });
+
+  it("removes nothing when the feature has fewer rows than the bound", () => {
+    seed("packing", 2);
+    expect(evictFeature("packing", 10)).toBe(0);
+    expect(countRows("packing")).toBe(2);
+  });
+
+  it("never evicts the row it has just written, even in a same-second burst", () => {
+    // Forty writes land inside one second, so every created_at ties and the
+    // ordering collapses to cache_key DESC alone. A key sorting low would then
+    // be deleted by its own sweep, the next read would miss, and the user
+    // would be re-billed for an answer we had already paid for. `protect` is
+    // what stops that; this loop is what proves it.
+    for (let i = 0; i < 40; i += 1) {
+      const key = cacheKey({ feature: "packing", model: `burst-${i}` });
+      putCached(key, "packing", { i }, { keep: 5 });
+      expect(getCached(key)).not.toBeNull();
+      // The bound holds throughout: at most `keep`, plus the protected row
+      // when it is not itself among the newest.
+      expect(countRows("packing")).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it("keeps a protected key that would otherwise be swept as the oldest", () => {
+    const keys = seed("packing", 4);
+    keys.forEach((key, i) => {
+      db.prepare(
+        "UPDATE ai_cache SET created_at = datetime('now', ?) WHERE cache_key = ?",
+      ).run(`-${10 - i} minutes`, key);
+    });
+    // keys[0] is the oldest by ten minutes and would go first.
+    expect(evictFeature("packing", 1, { protect: keys[0] })).toBe(2);
+    expect(getCached(keys[0])).not.toBeNull();
+    expect(getCached(keys[3])).not.toBeNull();
+    expect(countRows("packing")).toBe(2);
+  });
+
+  it("putCached without a keep option evicts nothing", () => {
+    seed("packing", 12);
+    const key = cacheKey({ feature: "packing", model: "unbounded" });
+    putCached(key, "packing", { free: true });
+    expect(countRows("packing")).toBe(13);
   });
 });
