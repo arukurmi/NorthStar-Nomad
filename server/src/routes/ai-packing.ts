@@ -1,6 +1,7 @@
 import { Router } from "express";
-import type { Response } from "express";
-import { requireAuth } from "../auth/tokens.js";
+import type { NextFunction, Response } from "express";
+import { requireAuth, type AuthedRequest } from "../auth/tokens.js";
+import { db } from "../db.js";
 import { allDestinations } from "../data/index.js";
 import { cacheKey, getCached, putCached } from "../ai/cache.js";
 import { loadUserKey, type AiRequest } from "../ai/loadUserKey.js";
@@ -105,7 +106,10 @@ type PackingRequestParse =
  * mistake, anything else — echoing it back is how a credential ends up in a
  * screenshot or a log line.
  */
-function parsePackingRequest(body: unknown): PackingRequestParse {
+function parsePackingRequest(
+  body: unknown,
+  userId: number,
+): PackingRequestParse {
   const raw = (body ?? {}) as Record<string, unknown>;
 
   const dest = allDestinations.find((d) => d.id === raw.destinationId);
@@ -130,6 +134,15 @@ function parsePackingRequest(body: unknown): PackingRequestParse {
   if (days > MAX_SPAN_DAYS) {
     return { ok: false, message: `trips longer than ${MAX_SPAN_DAYS} days are not supported` };
   }
+  // The span is bounded but the epoch was not, so "0001-01-01" was a valid,
+  // cacheable request. Nothing useful lives outside a planning horizon, and
+  // bounding it shrinks the key space one caller can mint — which is what the
+  // shared eviction budget is exposed to.
+  const startYear = Number(start.slice(0, 4));
+  const thisYear = new Date().getUTCFullYear();
+  if (startYear < thisYear - 1 || startYear > thisYear + 2) {
+    return { ok: false, message: "start must be within a year or two of today" };
+  }
 
   // Required, never defaulted. Defaulting to "flight" would hand a rider a list
   // built around cabin liquid limits and lost checked baggage — the exact
@@ -139,15 +152,27 @@ function parsePackingRequest(body: unknown): PackingRequestParse {
     return { ok: false, message: `mode must be one of ${MODES.join(", ")}` };
   }
 
-  // TODO(P03): Phase 03 resolves this to an owned trip matching the tuple and
-  // syncs `trip_packing`. Validated here so a client that already sends it gets
-  // a 400 rather than silent acceptance of a value nothing reads yet.
+  // Ownership is checked *now*, not when Phase 03 starts reading this field.
+  // Nothing here consumes tripId yet, so accepting another user's id is inert
+  // today — but the contract already promises "owned and matching the tuple",
+  // and a check deferred to the commit that starts using the value is a check
+  // that gets forgotten. Scoped by user_id, so someone else's trip is a 400
+  // with the same message as a malformed one: no existence oracle.
   const tripId = raw.tripId;
-  if (
-    tripId !== undefined &&
-    (typeof tripId !== "number" || !Number.isSafeInteger(tripId) || tripId < 1)
-  ) {
-    return { ok: false, message: "tripId must be a positive integer" };
+  if (tripId !== undefined) {
+    if (
+      typeof tripId !== "number" ||
+      !Number.isSafeInteger(tripId) ||
+      tripId < 1
+    ) {
+      return { ok: false, message: "tripId must be a positive integer" };
+    }
+    const owned = db
+      .prepare("SELECT id FROM trips WHERE id = ? AND user_id = ?")
+      .get(tripId, userId);
+    if (!owned) {
+      return { ok: false, message: "tripId must be a positive integer" };
+    }
   }
 
   return { ok: true, value: { dest, start, end, mode: raw.mode } };
@@ -165,35 +190,96 @@ function toIsoTimestamp(stored: string): string {
   return new Date(at).toISOString();
 }
 
+/**
+ * Every failure on this route is otherwise silent: `sendAiError` writes the
+ * response and drops the cause, so a catalogue data bug and a vendor outage are
+ * the same anonymous 502 to an operator.
+ *
+ * What is logged is deliberately narrow — a stage, a destination id, and the
+ * error's class or `AiError` code. Never the cause chain, never the message of
+ * an arbitrary throwable, never anything derived from the request body. An
+ * upstream error object can carry the request that produced it, headers and
+ * `Authorization` and all, which is exactly how a key reaches a log file.
+ */
+function logRouteFault(stage: string, destinationId: string, err: unknown): void {
+  const code = err instanceof AiError ? err.code : (err as Error)?.name;
+  console.error(
+    `ai-packing: ${stage} failed for ${destinationId} (${code ?? "unknown"})`,
+  );
+}
+
 export const aiPackingRouter = Router();
+
+/**
+ * The throttle is its own middleware, and its position is the point: it sits
+ * *between* `requireAuth` and `loadUserKey`, not inside the handler.
+ *
+ * `loadUserKey` decrypts a stored key, which is a scrypt derivation —
+ * ~60–90 ms on a libuv thread at 64 MB. `vault.ts` memoises by salt but caps
+ * at 64 entries, and every saved key has its own salt. Registration is not
+ * throttled, so with the limiter behind the key load an attacker registers
+ * seventy accounts, saves one real key on each, and round-robins empty-bodied
+ * requests: every one misses the derive cache, four concurrent saturate the
+ * default threadpool, and none of it needs a valid body or costs them a cent.
+ * In front of the key load, that budget is spent before any scrypt runs.
+ */
+function throttlePacking(req: AuthedRequest, res: Response, next: NextFunction): void {
+  const decision = packingLimiter.check(`packing:${req.userId as number}`);
+  if (decision.allowed) {
+    next();
+    return;
+  }
+  // Counts every request, not every generation: a rejected or cached request is
+  // indistinguishable from a script's warm-up on its way to a paid one, so it
+  // has to cost budget too. Spend is bounded a fortiori, since spend ⊆ requests.
+  sendAiError(
+    res,
+    new AiError(
+      "rate_limited",
+      `too many packing requests — try again in ${decision.retryAfter}s`,
+      { retryAfter: decision.retryAfter },
+    ),
+  );
+}
 
 // `aiKeysRouter` already mounts `requireAuth` on `/api/ai` and is registered
 // first, so it runs twice for this path. It is idempotent, and mounting it here
 // explicitly keeps this file self-contained rather than correct only by virtue
 // of another router's position in `createApp`.
-aiPackingRouter.use("/api/ai/packing", requireAuth, loadUserKey);
+aiPackingRouter.use(
+  "/api/ai/packing",
+  requireAuth,
+  throttlePacking,
+  loadUserKey,
+);
 
-aiPackingRouter.post("/api/ai/packing", async (req: AiRequest, res) => {
+/**
+ * Express 4 does not consume a handler's returned promise, so a rejection is an
+ * *unhandled* rejection — under Node 20's default that terminates the process,
+ * and the client meanwhile gets no response at all. `loadUserKey` guards against
+ * exactly this and says so; this route has to as well.
+ *
+ * The throws are not hypothetical. `getCached` runs `JSON.parse` over a stored
+ * row, so a payload that is not valid JSON is neither a miss nor a 502 but a
+ * hang plus a crash. And every better-sqlite3 call here can raise `SQLITE_BUSY`
+ * or `SQLITE_IOERR` — an operational reality with a file database in WAL and any
+ * second writer, such as an overlapping deploy.
+ *
+ * So the whole handler is wrapped, and every throw reaches `sendAiError`, which
+ * scrubs anything that is not an `AiError` down to a fixed string. No stack, no
+ * message, no path on the wire.
+ */
+aiPackingRouter.post("/api/ai/packing", (req: AiRequest, res) => {
+  void handlePacking(req, res).catch((err: unknown) => {
+    if (!res.headersSent) sendAiError(res, err);
+  });
+});
+
+async function handlePacking(req: AiRequest, res: Response): Promise<void> {
   const userId = req.userId as number; // requireAuth guarantees this
   const ai = req.ai as NonNullable<AiRequest["ai"]>; // loadUserKey guarantees this
 
-  // Checked before validation: a rejected request is exactly what a script
-  // burning someone else's credit looks like on its way to a well-formed one,
-  // so an attempt has to cost budget whether or not it was well-formed.
-  const limit = packingLimiter.check(`packing:${userId}`);
-  if (!limit.allowed) {
-    sendAiError(
-      res,
-      new AiError(
-        "rate_limited",
-        `too many packing lists — try again in ${limit.retryAfter}s`,
-        { retryAfter: limit.retryAfter },
-      ),
-    );
-    return;
-  }
-
-  const parsed = parsePackingRequest(req.body);
+  const parsed = parsePackingRequest(req.body, userId);
   if (!parsed.ok) {
     sendLocalError(res, 400, "bad_request", parsed.message);
     return;
@@ -258,16 +344,24 @@ aiPackingRouter.post("/api/ai/packing", async (req: AiRequest, res) => {
       temperature: 0.4,
     });
 
-    putCached(key, "packing", result.data, { keep: PACKING_CACHE_LIMIT });
-    recordUsage({
-      userId,
-      feature: "packing",
-      provider: ai.providerId,
-      model: ai.model,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      cached: false,
-    });
+    // Persisting is deliberately *after* the answer exists and deliberately not
+    // allowed to lose it. The completion is already paid for; failing the
+    // request because a cache write hit a locked database would charge the user
+    // and hand them a 502 blaming the vendor for our storage fault.
+    try {
+      putCached(key, "packing", result.data, { keep: PACKING_CACHE_LIMIT });
+      recordUsage({
+        userId,
+        feature: "packing",
+        provider: ai.providerId,
+        model: ai.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        cached: false,
+      });
+    } catch (err) {
+      logRouteFault("persist", dest.id, err);
+    }
 
     res.json({
       cached: false,
@@ -278,6 +372,7 @@ aiPackingRouter.post("/api/ai/packing", async (req: AiRequest, res) => {
     // The single place an AI route writes an error response: it maps the code to
     // a status, sets Retry-After, and scrubs the message of anything that is not
     // an AiError — an arbitrary throwable can carry the request that produced it.
+    logRouteFault("complete", dest.id, err);
     sendAiError(res, err);
   }
-});
+}
