@@ -78,4 +78,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_ai_usage_user
     ON ai_usage(user_id, feature);
+
+  CREATE TABLE IF NOT EXISTS trip_packing (
+    trip_id    INTEGER NOT NULL REFERENCES trips(id),
+    item_key   TEXT    NOT NULL,
+    category   TEXT    NOT NULL,
+    label      TEXT    NOT NULL,
+    qty        INTEGER NOT NULL DEFAULT 1 CHECK (qty >= 1),
+    reason     TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    checked    INTEGER NOT NULL DEFAULT 0 CHECK (checked IN (0, 1)),
+    updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (trip_id, item_key)
+  );
 `);
