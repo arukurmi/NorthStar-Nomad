@@ -51,9 +51,9 @@ first writer settles these. It does.
 
 ### 2.1 Decision 1 — cache poisoning and cross-provider serving
 
-**Chosen: add `provider?: ProviderId` to `CacheKeyInput` and project it in
-`cacheKey()`.** Two lines in `server/src/ai/cache.ts`. Not the `options` bag.
-Not a server-pinned model set.
+**Chosen: add a required `provider: ProviderId` to `CacheKeyInput` and project
+it in `cacheKey()`.** Two lines in `server/src/ai/cache.ts`. Not the `options`
+bag. Not a server-pinned model set.
 
 **Why change `cache.ts` rather than pass `provider` through `options`.** The
 `options` route is tempting because it is zero-risk — `options: { provider }`
@@ -68,15 +68,15 @@ zero production callers today, `ai_cache` is empty in every deployed database,
 and the test DB is `:memory:`. There is no stale row to invalidate and no
 migration to write. It will never be cheaper than right now.
 
-**Why the field is optional, not required.** Required would be the stronger
-guarantee, but it forces an edit to every existing assertion in `cache.test.ts`,
-and "the 256 tests still pass" would only be true after rewriting them — which
-is exactly the kind of change that hides a regression. Optional costs nothing:
-`canonical()` filters `v !== undefined` before hashing, so `cacheKey({…no
-provider})` is **byte-identical to today's hash**. Every existing cache test
-passes untouched. The guarantee is then carried by (a) a new test asserting the
-same tuple under two providers yields two different keys, and (b) the F2 route,
-which always passes it.
+**Why the field is required.** It shipped optional first, on the reasoning that
+`canonical()` strips `undefined` so every existing key stayed byte-identical and
+no existing test needed editing. Review pushed back and was right: an optional
+field does not remove the "every route must remember" problem, it moves it —
+which is the exact objection that ruled out threading it through `options`.
+Every `AiFeature` is a model call, so every caller has a provider, and making
+the compiler say so costs one keyword. The pre-provider digest survives as a
+pinned regression anchor in `cache.test.ts`, behind a deliberate cast, because
+what it guards is stored rows rather than an API.
 
 **Why no server-pinned model set.** Pinning does one of two bad things. Either a
 user on `claude-haiku-4` is served a `claude-sonnet-5` answer — better output,
@@ -161,10 +161,14 @@ The constant lives in `ai/prompts/packing.ts` beside `PACKING_PROMPT_VERSION`,
 because both are properties of *this prompt's answers*, not of the cache
 mechanism. F1/F3/F4 declare their own.
 
-**Write eviction: bounded per-feature sweep, 500 rows, oldest-write-first.**
+**Write eviction: bounded per-feature sweep, 2000 rows, oldest-write-first.**
 
 ```ts
-export function evictFeature(feature: AiFeature, keep: number): number;
+export function evictFeature(
+  feature: AiFeature,
+  keep: number,
+  opts?: { protect?: string },
+): number;
 ```
 
 ```sql
@@ -178,13 +182,38 @@ DELETE FROM ai_cache
        )
 ```
 
-**Why 500.** The realistic working set is countable: the catalogue is ~32
+**Why 2000.** The realistic working set is countable: the catalogue is ~32
 destinations × 3 modes = ~96 `(destination, mode)` pairs, and a given month has
-roughly 4–6 live long-weekend date ranges. 96 × 5 ≈ 480. So 500 holds one
-provider/model's *entire* realistic working set for a month; the sweep only bites
-on fragmentation across models, or on abuse. At ~3 KB a payload that is ~1.5 MB —
-negligible beside a WAL SQLite file — and it converts an unbounded growth path (a
-script iterating distinct date ranges) into a bounded one.
+roughly 4–6 live long-weekend date ranges. 96 × 5 ≈ 480 rows *per model* — and
+the key is namespaced by provider and model, so the true working set is 480 ×
+however many distinct models are in use. 500 was the first number here and it
+was wrong: across three vendor defaults it meant eviction fired constantly in
+normal operation. 2000 holds all three at once, so the sweep only bites on
+genuine abuse. At ~3 KB a payload that is ~6 MB — negligible beside a WAL SQLite
+file — and it converts an unbounded growth path (a script iterating distinct
+date ranges) into a bounded one.
+
+**What the bound does not do**, stated because review found it and it is a real
+residual: the budget is **shared across every user**. Somebody issuing 2000
+distinct legitimate requests evicts everyone else's rows and makes them re-pay
+on their next visit. It costs the attacker 2000 completions billed to their own
+key and the route's 30/hour throttle bounds the rate, but it is not eliminated.
+Fixing it properly needs a per-caller partition, which needs a column, which
+needs a migration runner this repo does not have. Recorded in
+`docs/THREAT-MODEL.md` rather than left implicit.
+
+**Why a `protect` key.** The `created_at` tie-break is not enough on its own.
+`datetime('now')` resolves to the second, so a burst of writes shares a
+timestamp and the ordering collapses to `cache_key DESC` alone — a newly written
+key that sorts low is then deleted by its own sweep, the next read misses, and
+the user pays twice for one answer. `putCached` passes the key it just wrote,
+so a feature holds at most `keep + 1` rows rather than exactly `keep`.
+
+**Why `keep` and the cache key are validated.** SQLite reads `LIMIT -1` as "no
+limit", so a negative bound would silently sweep nothing — a bound that becomes
+unbounded is the one failure this function exists to prevent. And a row written
+under the `""` sentinel would be shielded from every future sweep forever, so
+`putCached` rejects anything that is not a 64-hex digest.
 
 **Why oldest-write-first rather than LRU.** `created_at` is the only timestamp
 the table has, and `putCached`'s `ON CONFLICT` refreshes it, so this is really
@@ -198,9 +227,9 @@ for space, write-recency is a fine proxy.
 
 **Why `ORDER BY created_at DESC, cache_key DESC`.** `datetime('now')` has
 one-second resolution. Without the tie-break, a burst of writes inside one second
-gives SQLite an arbitrary order and the sweep can evict the row it just wrote.
-This is the kind of thing that passes review and fails a test that writes 501
-rows in a loop — so there is such a test.
+gives SQLite an arbitrary order and the survivor set stops being a function of
+the table's contents. It makes the sweep deterministic; it is `protect`, above,
+that makes it safe.
 
 **Index.** `idx_ai_cache_feature(feature, created_at)` already exists and serves
 both the subquery's filter and its ordering. Nothing new.
@@ -300,7 +329,7 @@ changes. No new dependency.
     item_key   TEXT    NOT NULL,
     category   TEXT    NOT NULL,
     label      TEXT    NOT NULL,
-    qty        INTEGER NOT NULL DEFAULT 1 CHECK (qty >= 1),
+    qty        INTEGER NOT NULL DEFAULT 1 CHECK (qty BETWEEN 1 AND 20),
     reason     TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     checked    INTEGER NOT NULL DEFAULT 0 CHECK (checked IN (0, 1)),
@@ -354,7 +383,15 @@ itemKey = sha256(`${slug(category)}|${slug(label)}`).digest("hex").slice(0, 16)
   to validate on the tick endpoint (`/^[0-9a-f]{16}$/`).
 - **64 bits** — over ≤ 48 items the collision probability is ~6×10⁻¹⁶.
 - **Duplicates are a hard parse failure**, not a silent merge: two checkboxes
-  sharing one tick is worse than a retry.
+  sharing one tick is worse than a retry. Duplicate *category names* fail for a
+  sharper reason — `readStoredList` groups persisted rows by `category`, so two
+  sections called "Gear" rehydrate as one after a reload and the list the user
+  sees stops matching the list that was generated.
+- **`slug` strips combining marks and falls back for non-Latin labels.** Without
+  the first, "Naïve" slugs to `nai-ve` and "Naive" to `naive`, so exactly the
+  drift this is meant to survive breaks a tick. Without the second, any label
+  with no ASCII alphanumerics slugs to `""`, two Devanagari labels in one
+  category collide, and valid model output becomes a 502.
 
 The key is derived from category + label only, so it is not user-specific and
 correctly belongs in the shared cached payload. `checked` never does.
@@ -426,7 +463,7 @@ production.
 | `items[].label` | string, trimmed, 1–60 chars |
 | `items[].qty` | integer, 1–20 |
 | `items[].reason` | absent, `null`, `""`, or 1–160 chars. `null`/`""` ⇒ omitted |
-| whole list | no duplicate `itemKey` |
+| whole list | no duplicate `itemKey`, and no duplicate category `name` |
 | any node | unknown extra properties are **dropped**, not rejected |
 
 Two things worth stating plainly. First, **the parser must be authoritative**:
@@ -741,7 +778,7 @@ keys, and the correct mode brief inside `fake.calls[n].user`.
 
 **(c) Byte-exact fixtures.** `packing.spiti-bike-7d.txt` (cold high-altitude,
 bike, 7 days), `packing.goa-flight-2d.txt` (monsoon coast, flight, 2 days,
-cabin-only), `packing.intl-flight-5d.txt` (international → Documents).
+cabin-only), `packing.bali-flight-5d.txt` (international → Documents).
 
 **(d) Quantity scaling.** `quantityGuide(2) ≠ quantityGuide(7)`;
 `quantityGuide(14)` caps daily at 7.
