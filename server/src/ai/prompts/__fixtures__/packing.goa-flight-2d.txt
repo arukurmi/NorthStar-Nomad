@@ -1,0 +1,35 @@
+Build a packing checklist for the trip below. These are the only facts you
+have; everything you write must trace back to one of them.
+
+DESTINATION
+Name: Goa
+Region: Konkan Coast
+Country: India
+This is a domestic trip, so Documents needs no passport, visa, plug adapter or foreign currency.
+Tags: beach, nightlife, seafood
+Good for travelling by road: yes
+Days this destination really needs: 3
+
+DATES
+Start: 2026-07-11
+End: 2026-07-12
+Length: 2 days, counting both dates
+Calendar months covered: July
+
+TYPICAL WEATHER FOR THOSE MONTHS
+Coldest low: 24 °C
+Hottest high: 29 °C
+July — Heavy rain, lush but wet
+
+TRAVEL MODE
+Travelling by: flight
+Liquids in containers over 100 ml cannot travel in the cabin at all. Power banks above 100 Wh are refused outright, and sharp tools are restricted to checked baggage. Checked baggage can arrive a day late or not at all, so one day of essentials and every medication travel in the cabin bag rather than in the hold. Total weight is capped and weighed at the counter, so bulk and mass both cost money.
+
+Title the mode category exactly: Mode — Flight
+Do not place an item in the mode section that would appear unchanged in a list for a different travel mode. If an item belongs to every mode, it belongs in Clothing, Gear, Documents or Health.
+
+Quantity guide. Copy these numbers; do not compute your own.
+- Items worn fresh every day (t-shirts, underwear, socks): qty 2.
+- Items worn more than once before washing (trousers, shirts, towels): qty 1.
+- Everything worn or carried once (jacket, shoes, charger, documents): qty 1.
+This trip is 2 days long, and the daily number is capped at 7 however long the trip runs: beyond a week assume one laundry stop rather than one garment per day.
