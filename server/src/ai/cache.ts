@@ -106,17 +106,26 @@ export function getCached<T>(
 }
 
 /**
- * `ORDER BY created_at DESC, cache_key DESC` — the tie-break is not cosmetic.
- * `datetime('now')` has one-second resolution, so a burst of writes inside one
- * second leaves SQLite free to pick any order, and the sweep can then evict the
- * row it has just written. The secondary sort makes the survivor set a pure
- * function of the table's contents.
+ * Two details in here are load-bearing.
+ *
+ * `ORDER BY created_at DESC, cache_key DESC` — `datetime('now')` resolves to
+ * the second, so a burst of writes shares a timestamp and without the
+ * tie-break SQLite may return any "newest N" it likes. The secondary sort
+ * makes the survivor set a pure function of the table's contents.
+ *
+ * `cache_key <> ?` — the tie-break alone is *not* enough to protect a fresh
+ * write. When every row in the second ties, the ordering collapses to
+ * `cache_key DESC`, and a newly written key that happens to sort low is
+ * evicted by its own sweep. The next read then misses and re-bills the user
+ * for the answer we just paid for, which is precisely what the cache exists
+ * to prevent. So the row being written is excluded explicitly.
  *
  * Driven by idx_ai_cache_feature(feature, created_at), which already existed.
  */
 const evictOldest = db.prepare(`
   DELETE FROM ai_cache
    WHERE feature = ?
+     AND cache_key <> ?
      AND cache_key NOT IN (
            SELECT cache_key FROM ai_cache
             WHERE feature = ?
@@ -127,7 +136,7 @@ const evictOldest = db.prepare(`
 
 /**
  * Trims one feature's rows to the `keep` most recently written, returning how
- * many were removed.
+ * many were removed. `protect` is never evicted regardless of its age.
  *
  * Least-recently-*written*, not least-recently-used. True LRU needs a
  * `last_read_at` column, which means an ALTER TABLE in a repo with no migration
@@ -136,8 +145,14 @@ const evictOldest = db.prepare(`
  * a loop. Age-based expiry is `getCached`'s `maxAgeMs`; this bound is about
  * space, and for space, write recency is a fine proxy.
  */
-export function evictFeature(feature: AiFeature, keep: number): number {
-  return evictOldest.run(feature, feature, keep).changes;
+export function evictFeature(
+  feature: AiFeature,
+  keep: number,
+  opts?: { protect?: string },
+): number {
+  // "" is not a possible cache key (they are 64 hex characters), so it is a
+  // safe "protect nothing" sentinel and keeps the statement single-shape.
+  return evictOldest.run(feature, opts?.protect ?? "", feature, keep).changes;
 }
 
 /**
@@ -163,6 +178,6 @@ export function putCached<T>(
 const writeThenEvict = db.transaction(
   (key: string, feature: AiFeature, payload: string, keep: number) => {
     upsertEntry.run(key, feature, payload);
-    evictOldest.run(feature, feature, keep);
+    evictOldest.run(feature, key, feature, keep);
   },
 );
