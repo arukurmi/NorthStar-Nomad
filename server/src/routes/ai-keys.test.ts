@@ -498,6 +498,30 @@ describe("key leakage", () => {
           .send({ provider: "anthropic" }),
       ],
       ["GET /api/ai/usage", await request(app).get("/api/ai/usage").set("Authorization", auth)],
+      // F2's route is the first surface that *decrypts* the canary and hands
+      // the plaintext to an adapter, so it belongs in this sweep more than any
+      // of the key-management routes do. Both a success and a rejection: the
+      // rejection is the dangerous one, because the handler is holding the
+      // plaintext at the moment it writes the error body.
+      [
+        "POST /api/ai/packing",
+        await request(app)
+          .post("/api/ai/packing")
+          .set("Authorization", auth)
+          .send({
+            destinationId: "goa",
+            start: "2026-12-25",
+            end: "2026-12-27",
+            mode: "flight",
+          }),
+      ],
+      [
+        "POST /api/ai/packing (bad request)",
+        await request(app)
+          .post("/api/ai/packing")
+          .set("Authorization", auth)
+          .send({ destinationId: "nowhere", start: "x", end: "y", mode: "sled" }),
+      ],
       ["GET /api/auth/me", await request(app).get("/api/auth/me").set("Authorization", auth)],
       ["GET /api/trips", await request(app).get("/api/trips").set("Authorization", auth)],
       [
