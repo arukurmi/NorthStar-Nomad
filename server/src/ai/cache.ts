@@ -36,6 +36,13 @@ export interface CacheKeyInput {
 
 export interface CacheEntry<T> {
   payload: T;
+  /**
+   * ISO-8601 with a `Z`, normalised here rather than left as the column's raw
+   * value. `datetime('now')` writes "YYYY-MM-DD HH:MM:SS" in UTC with **no zone
+   * marker**, which `new Date(...)` in a browser reads as *local* time — so a
+   * list generated a minute ago reads as hours old for every user not on UTC.
+   * Normalising at this boundary means F1, F3 and F4 cannot each rediscover it.
+   */
   createdAt: string;
 }
 
@@ -100,13 +107,18 @@ export function getCached<T>(
     | undefined;
   if (!row) return null;
 
-  if (opts?.maxAgeMs !== undefined) {
-    const age = Date.now() - parseStoredTime(row.createdAt);
-    // An unparseable timestamp is treated as a miss, not as fresh.
-    if (!Number.isFinite(age) || age > opts.maxAgeMs) return null;
+  const storedAt = parseStoredTime(row.createdAt);
+  // An unparseable timestamp is a miss, not "fresh" and not a thrown
+  // RangeError on the toISOString below.
+  if (!Number.isFinite(storedAt)) return null;
+  if (opts?.maxAgeMs !== undefined && Date.now() - storedAt > opts.maxAgeMs) {
+    return null;
   }
 
-  return { payload: JSON.parse(row.payload) as T, createdAt: row.createdAt };
+  return {
+    payload: JSON.parse(row.payload) as T,
+    createdAt: new Date(storedAt).toISOString(),
+  };
 }
 
 /**

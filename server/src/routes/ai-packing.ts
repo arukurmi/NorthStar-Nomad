@@ -179,18 +179,6 @@ function parsePackingRequest(
 }
 
 /**
- * `ai_cache.created_at` is `datetime('now')` output — "YYYY-MM-DD HH:MM:SS" in
- * UTC with **no zone marker** — which `new Date(...)` in a browser reads as
- * local time. Shipped raw, a list generated a minute ago reads as hours old
- * wherever the user is not on UTC. Throws on an unparseable value, which the
- * caller handles by treating the row as a miss.
- */
-function toIsoTimestamp(stored: string): string {
-  const at = stored.includes("T") ? stored : `${stored.replace(" ", "T")}Z`;
-  return new Date(at).toISOString();
-}
-
-/**
  * Every failure on this route is otherwise silent: `sendAiError` writes the
  * response and drops the cause, so a catalogue data bug and a vendor outage are
  * the same anonymous 502 to an operator.
@@ -310,7 +298,8 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
     let generatedAt = "";
     try {
       list = parsePackingList(entry.payload, mode);
-      generatedAt = toIsoTimestamp(entry.createdAt);
+      // Already ISO-8601 with a zone marker — getCached normalises it.
+      generatedAt = entry.createdAt;
     } catch {
       list = null;
     }
