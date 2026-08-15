@@ -14,7 +14,13 @@ const GOA_TRIP: CacheKeyInput = {
   start: "2026-12-25",
   end: "2026-12-28",
   model: "claude-sonnet-5",
+  provider: "anthropic",
 };
+
+/** A key for a feature/model pair, used where only uniqueness matters. */
+function keyFor(feature: CacheKeyInput["feature"], model: string): string {
+  return cacheKey({ feature, model, provider: "anthropic" });
+}
 
 describe("cacheKey", () => {
   it("produces a stable 64-character hex key for identical input", () => {
@@ -51,7 +57,11 @@ describe("cacheKey", () => {
   });
 
   it('omits undefined fields rather than hashing the string "undefined"', () => {
-    const bare: CacheKeyInput = { feature: "packing", model: "gpt-5" };
+    const bare: CacheKeyInput = {
+      feature: "packing",
+      model: "gpt-5",
+      provider: "openai",
+    };
     expect(
       cacheKey({ ...bare, destinationId: undefined, mode: undefined }),
     ).toBe(cacheKey(bare));
@@ -72,6 +82,7 @@ describe("cacheKey", () => {
       start: "2026-12-25",
       end: "2026-12-28",
       model: "claude-sonnet-5",
+      provider: "anthropic",
     });
     expect(alice).toBe(bob);
   });
@@ -79,22 +90,20 @@ describe("cacheKey", () => {
   it("produces a different key when the provider changes", () => {
     // The reason this field exists: without it, an answer produced by one
     // vendor's model is served verbatim to a user who configured another.
-    const anthropic = cacheKey({ ...GOA_TRIP, provider: "anthropic" });
+    const anthropic = cacheKey(GOA_TRIP);
     const openai = cacheKey({ ...GOA_TRIP, provider: "openai" });
     const gemini = cacheKey({ ...GOA_TRIP, provider: "gemini" });
     expect(new Set([anthropic, openai, gemini]).size).toBe(3);
   });
 
-  it("hashes an input without a provider exactly as it did before the field existed", () => {
-    // `canonical` strips undefined before hashing, so an absent provider is
-    // absent from the digest. This is what let every assertion in this file
-    // survive the change unedited — and it is worth an explicit test, because
-    // the day it stops being true, every stored row silently misses.
-    expect(cacheKey({ ...GOA_TRIP, provider: undefined })).toBe(
-      cacheKey(GOA_TRIP),
-    );
-    expect(cacheKey(GOA_TRIP)).toBe(
-      // Computed against the pre-provider implementation and pinned here.
+  it("hashes an input with no provider exactly as the pre-provider code did", () => {
+    // `canonical` strips undefined before hashing, so a shape with no provider
+    // still digests to what this function produced before the field existed.
+    // The type now forbids that shape — which is the point — so the cast is
+    // deliberate: this is a regression anchor for stored rows, not an API.
+    const legacy = { ...GOA_TRIP, provider: undefined } as unknown as CacheKeyInput;
+    expect(cacheKey(legacy)).toBe(
+      // Computed against origin/main's cache.ts and pinned here.
       "99fc3953915172462dfd21fa93b50072063016a6dd07d4ade3c72d74c4ca6887",
     );
   });
@@ -126,7 +135,7 @@ describe("cacheKey", () => {
 
 describe("ai_cache round trip", () => {
   it("getCached returns null on a miss", () => {
-    expect(getCached(cacheKey({ feature: "budget", model: "miss-model" }))).toBeNull();
+    expect(getCached(keyFor("budget", "miss-model"))).toBeNull();
   });
 
   it("getCached returns the stored payload on a hit", () => {
@@ -194,7 +203,7 @@ describe("ai_cache eviction", () => {
   function seed(feature: "packing" | "search", n: number): string[] {
     const keys: string[] = [];
     for (let i = 0; i < n; i += 1) {
-      const key = cacheKey({ feature, model: `evict-${feature}-${i}` });
+      const key = keyFor(feature, `evict-${feature}-${i}`);
       putCached(key, feature, { i });
       keys.push(key);
     }
@@ -241,20 +250,55 @@ describe("ai_cache eviction", () => {
     expect(countRows("packing")).toBe(2);
   });
 
-  it("never evicts the row it has just written, even in a same-second burst", () => {
-    // Forty writes land inside one second, so every created_at ties and the
-    // ordering collapses to cache_key DESC alone. A key sorting low would then
-    // be deleted by its own sweep, the next read would miss, and the user
-    // would be re-billed for an answer we had already paid for. `protect` is
-    // what stops that; this loop is what proves it.
+  it("never evicts the row it has just written, even when it sorts oldest", () => {
+    // Deterministic by construction rather than by luck. Five rows are seeded
+    // and dated an hour into the future, so the row written next is
+    // unambiguously the oldest and is exactly what a keep=5 sweep would take.
+    // Without `protect` this fails every run: the write succeeds, the row
+    // vanishes, the next read misses, and the user is billed a second time for
+    // an answer already bought.
+    const seeded = seed("packing", 5);
+    db.prepare(
+      "UPDATE ai_cache SET created_at = datetime('now', '+1 hour') WHERE feature = 'packing'",
+    ).run();
+
+    const fresh = keyFor("packing", "written-last");
+    putCached(fresh, "packing", { fresh: true }, { keep: 5 });
+
+    expect(getCached(fresh)).not.toBeNull();
+    expect(countRows("packing")).toBe(6);
+    for (const key of seeded) expect(getCached(key)).not.toBeNull();
+  });
+
+  it("holds the bound across a long burst of writes inside one second", () => {
+    // Every created_at here ties, so the ordering collapses to the cache_key
+    // tie-break alone. The table must still never exceed keep plus the one
+    // protected row.
     for (let i = 0; i < 40; i += 1) {
-      const key = cacheKey({ feature: "packing", model: `burst-${i}` });
+      const key = keyFor("packing", `burst-${i}`);
       putCached(key, "packing", { i }, { keep: 5 });
       expect(getCached(key)).not.toBeNull();
-      // The bound holds throughout: at most `keep`, plus the protected row
-      // when it is not itself among the newest.
       expect(countRows("packing")).toBeLessThanOrEqual(6);
     }
+  });
+
+  it("refuses a keep that SQLite would read as unbounded", () => {
+    seed("packing", 3);
+    // LIMIT -1 means "no limit" in SQLite, so a negative bound would sweep
+    // nothing at all — the exact failure this function exists to prevent, and
+    // it would be silent.
+    expect(() => evictFeature("packing", -1)).toThrow(RangeError);
+    expect(() => evictFeature("packing", 1.5)).toThrow(RangeError);
+    expect(countRows("packing")).toBe(3);
+  });
+
+  it("refuses to store a payload under anything but a real cache key", () => {
+    // "" is the protect sentinel: a row stored under it would be shielded
+    // from every future sweep, permanently.
+    expect(() => putCached("", "packing", { bad: true })).toThrow(RangeError);
+    expect(() => putCached("not-a-digest", "packing", { bad: true })).toThrow(
+      RangeError,
+    );
   });
 
   it("keeps a protected key that would otherwise be swept as the oldest", () => {
@@ -273,7 +317,7 @@ describe("ai_cache eviction", () => {
 
   it("putCached without a keep option evicts nothing", () => {
     seed("packing", 12);
-    const key = cacheKey({ feature: "packing", model: "unbounded" });
+    const key = keyFor("packing", "unbounded");
     putCached(key, "packing", { free: true });
     expect(countRows("packing")).toBe(13);
   });

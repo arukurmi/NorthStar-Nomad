@@ -21,10 +21,22 @@ export const PACKING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Row bound for the `packing` feature. ~32 destinations × 3 modes × ~5 live
- * date ranges ≈ 480, so 500 holds one model's entire realistic working set for
- * a month and only bites on fragmentation or abuse.
+ * date ranges ≈ 480 rows per model, and the key is namespaced by provider and
+ * model, so the working set is really 480 × however many distinct models are
+ * in use. 2000 holds all three vendors' defaults at once, which means eviction
+ * never fires during normal operation and only bites on genuine abuse. At
+ * ~3 KB a payload that is ~6 MB — nothing beside a WAL SQLite file.
+ *
+ * The sweep is a **space** guard, not a fairness mechanism, and it is worth
+ * being explicit about what that does not cover: the budget is shared across
+ * every user, so somebody issuing 2000 distinct legitimate requests evicts
+ * everyone else's rows and makes them re-pay. It costs the attacker 2000
+ * completions billed to their own key, and the route's per-user throttle
+ * bounds the rate, but it is not eliminated. Doing better needs a per-caller
+ * partition, which needs a column, which needs a migration runner this repo
+ * does not have. Recorded in docs/THREAT-MODEL.md rather than left implicit.
  */
-export const PACKING_CACHE_LIMIT = 500;
+export const PACKING_CACHE_LIMIT = 2000;
 
 /**
  * Hardcoded rather than derived from `toLocaleString`, which depends on the
