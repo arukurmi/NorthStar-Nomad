@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { db } from "../db.js";
-import type { AiFeature } from "./provider.js";
+import type { AiFeature, ProviderId } from "./provider.js";
 
 /**
  * Everything that changes the answer, and nothing that identifies who asked.
@@ -15,6 +15,17 @@ export interface CacheKeyInput {
   end?: string;
   mode?: string;
   model: string;
+  /**
+   * The vendor that produced the answer. Optional only so that an input
+   * without it hashes exactly as it did before this field existed; every
+   * feature route passes it.
+   *
+   * `model` alone is not enough. Two vendors sharing a model id string would
+   * collide today, and the moment an adapter with caller-chosen model names
+   * exists — a local model, an OpenAI-compatible gateway — one user's answer
+   * gets served to a user who configured a different vendor entirely.
+   */
+  provider?: ProviderId;
   /** Anything else that changes the answer. Key order is irrelevant. */
   options?: Record<string, string | number | boolean | null>;
 }
@@ -52,6 +63,7 @@ export function cacheKey(input: CacheKeyInput): string {
         end: input.end,
         mode: input.mode,
         model: input.model,
+        provider: input.provider,
         options: input.options,
       }),
     )
