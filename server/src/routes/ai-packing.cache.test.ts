@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import request from "supertest";
 import { createApp } from "../app.js";
 import { db } from "../db.js";
@@ -508,5 +508,90 @@ describe("POST /api/ai/packing mode brief", () => {
     expect(bike.user).not.toMatch(/cabin/i);
     expect(flight.user).toMatch(/cabin/i);
     expect(flight.user).not.toMatch(/pannier/i);
+  });
+});
+
+describe("the route's own cache-key wiring", () => {
+  // Exact row counts, and earlier tests in this file share the database, so
+  // this block starts from a clean packing table.
+  beforeEach(() => {
+    db.prepare("DELETE FROM ai_cache WHERE feature = 'packing'").run();
+  });
+
+  const OPENAI_KEY = "sk-cache-fixture-openai-0123456789abcd";
+  const TUPLE = {
+    destinationId: "goa",
+    start: "2026-12-25",
+    end: "2026-12-27",
+    mode: "flight" as const,
+  };
+
+  async function withOpenAiKey(email: string): Promise<string> {
+    const token = await register(email);
+    const saved = await request(app)
+      .post("/api/ai/keys")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ provider: "openai", apiKey: OPENAI_KEY });
+    expect(saved.status).toBe(200);
+    return token;
+  }
+
+  it("namespaces by provider, so one vendor's answer is not served for another", async () => {
+    // cache.test.ts proves cacheKey separates providers. This proves the ROUTE
+    // actually passes the caller's provider into it — hardcoding
+    // `provider: "anthropic"` at the call site would leave that suite green
+    // while reintroducing the exact cross-vendor serving the field exists to
+    // stop. Same tuple, same model id, two vendors, two completions.
+    const fakes = useFakeProviders({ defaultPayload: modelPayload("flight") });
+    const anthropicUser = await withKey("ns-anthropic@nomad.test");
+    const openAiUser = await withOpenAiKey("ns-openai@nomad.test");
+
+    const first = await pack(anthropicUser, TUPLE);
+    expect(first.status).toBe(200);
+    expect(first.body.cached).toBe(false);
+
+    const second = await pack(openAiUser, TUPLE);
+    expect(second.status).toBe(200);
+    expect(second.body.cached, "an OpenAI user was served an Anthropic row").toBe(
+      false,
+    );
+
+    const completions = (id: "anthropic" | "openai") =>
+      (fakes[id] as FakeProvider).calls.filter(
+        (c: FakeCall) => c.kind === "complete",
+      ).length;
+    expect(completions("anthropic")).toBe(1);
+    expect(completions("openai")).toBe(1);
+
+    // Two rows, not one, and both are real.
+    const rows = db
+      .prepare("SELECT COUNT(*) AS n FROM ai_cache WHERE feature = 'packing'")
+      .get() as { n: number };
+    expect(rows.n).toBe(2);
+  });
+
+  it("namespaces by model, so changing a model does not serve the old answer", async () => {
+    // The model travels from the user's own ai_keys row, so this is the path a
+    // user takes when they switch model and expect a fresh answer.
+    const fakes = useFakeProviders({ defaultPayload: modelPayload("flight") });
+    const token = await withKey("ns-model@nomad.test");
+
+    expect((await pack(token, TUPLE)).body.cached).toBe(false);
+
+    const changed = db
+      .prepare("UPDATE ai_keys SET model = ? WHERE user_id = ?")
+      .run("claude-opus-9", userIdFor("ns-model@nomad.test")).changes;
+    expect(changed).toBe(1);
+
+    const second = await pack(token, TUPLE);
+    expect(second.status).toBe(200);
+    expect(second.body.cached, "a new model was served the old model's row").toBe(
+      false,
+    );
+    expect(
+      (fakes.anthropic as FakeProvider).calls.filter(
+        (c: FakeCall) => c.kind === "complete",
+      ),
+    ).toHaveLength(2);
   });
 });

@@ -430,6 +430,21 @@ describe("key leakage", () => {
    */
   const CANARY_MIDDLE = CANARY.slice(8, 24);
 
+  /** A list that survives parsePackingList: 4 categories, 3+ items each. */
+  function canaryPackingPayload(): unknown {
+    const items = (prefix: string) =>
+      [1, 2, 3].map((n) => ({ label: `${prefix} item ${n}`, qty: n, reason: "" }));
+    return {
+      summary: "A short coastal trip in peak season.",
+      categories: [
+        { name: "Clothing", items: items("Clothing") },
+        { name: "Gear", items: items("Gear") },
+        { name: "Documents", items: items("Documents") },
+        { name: "Mode — Flight", items: items("Flight") },
+      ],
+    };
+  }
+
   function expectNoCanary(label: string, res: SupertestResponse): void {
     const surfaces: Array<[string, string]> = [
       ["body", JSON.stringify(res.body ?? null)],
@@ -488,6 +503,23 @@ describe("key leakage", () => {
 
     // 4. Every remaining /api/ai surface, plus the adjacent authed routes a
     //    leak could plausibly ride along on.
+    //
+    //    The packing call needs a scripted payload: `resetProviders()` above
+    //    restores *unscripted* fakes, whose `complete()` is handed `{}`, fails
+    //    the parser and 502s. Without this the "success" entry below would be
+    //    an error body, no cache row would ever be written, and the sweep would
+    //    quietly cover neither of the two surfaces it exists for.
+    useFakeProviders({ defaultPayload: canaryPackingPayload() });
+    const packingSuccess = await request(app)
+      .post("/api/ai/packing")
+      .set("Authorization", auth)
+      .send({
+        destinationId: "goa",
+        start: "2026-12-25",
+        end: "2026-12-27",
+        mode: "flight",
+      });
+
     const reads: Array<[string, SupertestResponse]> = [
       ["GET /api/ai/keys", await request(app).get("/api/ai/keys").set("Authorization", auth)],
       [
@@ -503,18 +535,7 @@ describe("key leakage", () => {
       // of the key-management routes do. Both a success and a rejection: the
       // rejection is the dangerous one, because the handler is holding the
       // plaintext at the moment it writes the error body.
-      [
-        "POST /api/ai/packing",
-        await request(app)
-          .post("/api/ai/packing")
-          .set("Authorization", auth)
-          .send({
-            destinationId: "goa",
-            start: "2026-12-25",
-            end: "2026-12-27",
-            mode: "flight",
-          }),
-      ],
+      ["POST /api/ai/packing", packingSuccess],
       [
         "POST /api/ai/packing (bad request)",
         await request(app)
@@ -530,6 +551,23 @@ describe("key leakage", () => {
       ],
     ];
     for (const [label, res] of reads) expectNoCanary(label, res);
+
+    // The success call must actually have succeeded, or the sweep silently
+    // covers only error bodies — and the 200 body is the one built while the
+    // handler holds the decrypted plaintext.
+    expect(packingSuccess.status, packingSuccess.text).toBe(200);
+
+    // And the highest-stakes new surface of all: ai_cache is global and its
+    // rows are served verbatim to every other user for thirty days, so a key
+    // that reached a payload would be handed out rather than merely logged.
+    const cached = db
+      .prepare("SELECT payload FROM ai_cache WHERE feature = 'packing'")
+      .all() as Array<{ payload: string }>;
+    expect(cached.length).toBeGreaterThan(0);
+    for (const row of cached) {
+      expect(row.payload).not.toContain(CANARY);
+      expect(row.payload).not.toContain(CANARY_MIDDLE);
+    }
   });
 
   it("stores no plaintext key bytes in any ai_keys column", async () => {

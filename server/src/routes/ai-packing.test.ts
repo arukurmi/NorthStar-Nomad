@@ -448,3 +448,48 @@ describe("POST /api/ai/packing provider selection", () => {
     expect(res.body.code).toBe("bad_request");
   });
 });
+
+describe("the throttle runs before anything expensive", () => {
+  it("charges budget for a malformed request, not only for a generation", async () => {
+    // The ordering in the route is a deliberate claim — a rejected request is
+    // indistinguishable from a script's warm-up on its way to a paid one — and
+    // without this test, moving validation in front of the limiter would leave
+    // the whole suite green while handing an attacker unlimited free attempts.
+    const token = await withKey("throttle-order@nomad.test");
+
+    for (let i = 0; i < 30; i += 1) {
+      const rejected = await pack(token, { destinationId: "nowhere" });
+      expect(rejected.status).toBe(400);
+    }
+
+    const wellFormed = await pack(token, {
+      destinationId: "goa",
+      start: "2026-12-25",
+      end: "2026-12-27",
+      mode: "flight",
+    });
+    expect(wellFormed.status).toBe(429);
+    expect(wellFormed.body.code).toBe("rate_limited");
+    expect(wellFormed.headers["retry-after"]).toBeDefined();
+  });
+
+  it("charges budget before the stored key is decrypted", async () => {
+    // loadUserKey runs a scrypt derivation, which is the expensive thing an
+    // unauthenticated-but-registered attacker can make us do for free.
+    // Exhausting the budget must therefore stop the request before the key is
+    // ever loaded: a user whose key row has been deleted still gets 429 rather
+    // than the 428 they would get if loadUserKey ran first.
+    const token = await withKey("throttle-before-key@nomad.test");
+    for (let i = 0; i < 30; i += 1) {
+      await pack(token, { destinationId: "nowhere" });
+    }
+    await request(app)
+      .delete("/api/ai/keys/anthropic")
+      .set("Authorization", `Bearer ${token}`);
+
+    const after = await pack(token, { destinationId: "nowhere" });
+    expect(after.status, "428 here means loadUserKey ran before the limiter").toBe(
+      429,
+    );
+  });
+});
