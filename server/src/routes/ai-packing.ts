@@ -5,6 +5,7 @@ import { db } from "../db.js";
 import { allDestinations } from "../data/index.js";
 import { cacheKey, getCached, putCached } from "../ai/cache.js";
 import { loadUserKey, type AiRequest } from "../ai/loadUserKey.js";
+import { findOwnedTrip, syncTripPacking } from "../ai/packingStore.js";
 import {
   makePackingParser,
   parsePackingList,
@@ -94,6 +95,8 @@ interface PackingRequestFields {
   readonly start: string;
   readonly end: string;
   readonly mode: TravelMode;
+  /** Present only when the caller named one; the trip is resolved either way. */
+  readonly tripId?: number;
 }
 
 type PackingRequestParse =
@@ -152,12 +155,11 @@ function parsePackingRequest(
     return { ok: false, message: `mode must be one of ${MODES.join(", ")}` };
   }
 
-  // Ownership is checked *now*, not when Phase 03 starts reading this field.
-  // Nothing here consumes tripId yet, so accepting another user's id is inert
-  // today — but the contract already promises "owned and matching the tuple",
-  // and a check deferred to the commit that starts using the value is a check
-  // that gets forgotten. Scoped by user_id, so someone else's trip is a 400
-  // with the same message as a malformed one: no existence oracle.
+  // The trip is resolved server-side from the tuple, so this field is never the
+  // only thing standing between a caller and someone else's trip. It is still
+  // accepted, and still ownership-checked, because the PRD's request shape
+  // carries it — and a supplied id that is not the caller's, or does not match
+  // the tuple, is a 400 with the same message as a malformed one. No oracle.
   const tripId = raw.tripId;
   if (tripId !== undefined) {
     if (
@@ -175,7 +177,16 @@ function parsePackingRequest(
     }
   }
 
-  return { ok: true, value: { dest, start, end, mode: raw.mode } };
+  return {
+    ok: true,
+    value: {
+      dest,
+      start,
+      end,
+      mode: raw.mode,
+      ...(tripId === undefined ? {} : { tripId: tripId as number }),
+    },
+  };
 }
 
 /**
@@ -194,6 +205,28 @@ function logRouteFault(stage: string, destinationId: string, err: unknown): void
   console.error(
     `ai-packing: ${stage} failed for ${destinationId} (${code ?? "unknown"})`,
   );
+}
+
+/**
+ * Mirrors the list into `trip_packing` and returns the tick state to spread
+ * onto the response, or `{}` when no saved trip matches.
+ *
+ * It runs on the cache-**hit** path as well as the miss path, which is the
+ * part worth stating: a user who saves the trip after generating the list, or
+ * who generated it before the trip existed, still gets their checkboxes on the
+ * next request without paying for a second completion.
+ *
+ * The tick state is assembled *here*, after `putCached`, and never becomes part
+ * of the payload. `ai_cache` is global — a `checked` flag in a cached row would
+ * be one user's private state served to a stranger.
+ */
+function tripStateFor(
+  trip: { id: number } | null,
+  list: PackingList,
+): { trip?: { id: number; checked: Record<string, boolean>; checkedCount: number; total: number } } {
+  if (!trip) return {};
+  const state = syncTripPacking(trip.id, list);
+  return { trip: { id: trip.id, ...state } };
 }
 
 export const aiPackingRouter = Router();
@@ -272,7 +305,13 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
     sendLocalError(res, 400, "bad_request", parsed.message);
     return;
   }
-  const { dest, start, end, mode } = parsed.value;
+  const { dest, start, end, mode, tripId } = parsed.value;
+
+  // Resolved from the tuple the caller already sent, so no trip id has to be
+  // trusted. Not finding one is not an error: generating a list for dates the
+  // user has not saved is legitimate, and the response simply omits `trip`,
+  // which is what tells the client to render the checkboxes disabled.
+  const trip = findOwnedTrip({ userId, destinationId: dest.id, start, end, mode, tripId });
 
   const key = cacheKey({
     feature: "packing",
@@ -313,7 +352,12 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
         outputTokens: 0,
         cached: true,
       });
-      res.json({ cached: true, generatedAt, packing: list });
+      res.json({
+        cached: true,
+        generatedAt,
+        packing: list,
+        ...tripStateFor(trip, list),
+      });
       return;
     }
   }
@@ -356,6 +400,7 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
       cached: false,
       generatedAt: new Date().toISOString(),
       packing: result.data,
+      ...tripStateFor(trip, result.data),
     });
   } catch (err) {
     // The single place an AI route writes an error response: it maps the code to
