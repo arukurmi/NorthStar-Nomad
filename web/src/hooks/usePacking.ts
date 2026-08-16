@@ -46,6 +46,11 @@ export interface UsePacking {
 }
 
 export function usePacking(request: PackingRequest): UsePacking {
+  // Destructured so the dependency list can name primitives. Depending on
+  // `request` itself would make `generate` a new function every render, since
+  // the caller rebuilds the object; suppressing the lint rule instead is what
+  // let `provider` go missing from the list unnoticed.
+  const { destinationId, start, end, mode, tripId, provider } = request;
   const { authFetch } = useAuth();
   const client = useMemo(() => createAiClient(authFetch), [authFetch]);
   const [state, setState] = useState<PackState>({ status: "idle" });
@@ -58,8 +63,11 @@ export function usePacking(request: PackingRequest): UsePacking {
 
   const generate = useCallback(() => {
     setState({ status: "generating" });
+    // A stale "that tick did not save" would otherwise survive onto the fresh
+    // list, where it refers to an item that may no longer be on it.
+    setTickError(null);
     client
-      .generatePacking(request)
+      .generatePacking({ destinationId, start, end, mode, tripId, provider })
       .then((res) => {
         setState({
           status: "ready",
@@ -84,18 +92,7 @@ export function usePacking(request: PackingRequest): UsePacking {
           retryAfter: failure.retryAfter,
         });
       });
-    // The request object is rebuilt by the caller on every render, so it is
-    // spread into primitives rather than depended on by identity — otherwise
-    // `generate` changes every render and every memo below it is worthless.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    client,
-    request.destinationId,
-    request.start,
-    request.end,
-    request.mode,
-    request.tripId,
-  ]);
+  }, [client, destinationId, start, end, mode, tripId, provider]);
 
   /**
    * Optimistic, with an exact revert.
@@ -123,7 +120,11 @@ export function usePacking(request: PackingRequest): UsePacking {
 
       const applyLocal = (next: boolean, counts?: { checkedCount: number; total: number }) =>
         setState((current) => {
+          // The trip-id guard matters: a `generate` can resolve while a tick is
+          // in flight, and without it a late response would write into a
+          // different trip's state.
           if (current.status !== "ready" || !current.trip) return current;
+          if (current.trip.id !== tripId) return current;
           const merged = { ...current.trip.checked, [itemKey]: next };
           return {
             ...current,
@@ -148,14 +149,36 @@ export function usePacking(request: PackingRequest): UsePacking {
       client
         .setPackingItem(tripId, itemKey, checked)
         .then((res) => {
-          applyLocal(res.checked, {
-            checkedCount: res.checkedCount,
-            total: res.total,
-          });
-          settle();
+          // Each response carries an authoritative snapshot, but responses can
+          // land out of order — ticking A then B and having B answer first
+          // would leave A's older count on screen while both items show as
+          // ticked, and it would stick until the next tick. So the server's
+          // count is only adopted when this was the last outstanding tick.
+          // Until then the locally recomputed count is correct by construction,
+          // because the map is dense over every item.
+          inFlight.current.delete(itemKey);
+          const settled = inFlight.current.size === 0;
+          applyLocal(
+            res.checked,
+            settled
+              ? { checkedCount: res.checkedCount, total: res.total }
+              : undefined,
+          );
+          setPending(new Set(inFlight.current));
         })
         .catch((err: unknown) => {
-          applyLocal(previous);
+          const gone =
+            err instanceof AiClientError && err.code === "not_found";
+          if (gone) {
+            // The trip was deleted in another tab. Keep inviting ticks and
+            // every one of them fails the same way; dropping to the untickable
+            // state renders the "save this trip" note instead.
+            setState((current) =>
+              current.status === "ready" ? { ...current, trip: null } : current,
+            );
+          } else {
+            applyLocal(previous);
+          }
           setTickError(
             err instanceof AiClientError
               ? err.message
