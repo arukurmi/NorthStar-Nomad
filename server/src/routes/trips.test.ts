@@ -395,6 +395,19 @@ describe("GET /api/trips/:id/packing", () => {
 });
 
 describe("POST /api/trips/:id/packing/check", () => {
+  it("404s a non-integer id, without ever reaching the store", async () => {
+    // parseTripId short-circuits before setChecked, so a well-formed body with
+    // a nonsense id must still land on the same 404 as a missing trip. The GET
+    // side of this is covered; without this the POST side was not.
+    const token = await register("check-bad-id@nomad.test");
+    const res = await check(token, "abc", {
+      itemKey: "0123456789abcdef",
+      checked: true,
+    });
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe("not_found");
+  });
+
   it("ticks and unticks, and the change is visible through the GET", async () => {
     const token = await register("check-roundtrip@nomad.test");
     const id = await tripFor(token, {

@@ -45,6 +45,9 @@ async function register(email: string): Promise<string> {
   const res = await request(app)
     .post("/api/auth/register")
     .send({ name: "Trip Nomad", email, password: "wanderlust1" });
+  // Asserted, so a registration regression fails here rather than surfacing as
+  // "Bearer undefined" and a confusing 401 several assertions later.
+  expect(res.status).toBe(201);
   return res.body.token as string;
 }
 
@@ -218,7 +221,6 @@ describe("regeneration", () => {
 
     useFakeProviders({ defaultPayload: modelPayload("bike") });
     const first = await pack(token, SPITI);
-    const keys = Object.keys(first.body.trip.checked);
     // Tick one item that survives the regeneration and one that does not.
     const survivor = first.body.packing.categories[0].items[0].itemKey;
     const doomed = first.body.packing.categories[3].items[2].itemKey;
@@ -247,7 +249,6 @@ describe("regeneration", () => {
     expect(after.find((r) => r.item_key === survivor)?.checked).toBe(1);
     expect(after.find((r) => r.item_key === doomed)).toBeUndefined();
     expect(second.body.trip.checkedCount).toBe(1);
-    expect(keys).toHaveLength(ITEM_COUNT);
   });
 });
 

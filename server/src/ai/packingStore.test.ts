@@ -368,17 +368,36 @@ describe("readTickState", () => {
     });
   });
 
-  it("counts are derived from the rows, so total cannot disagree with checked", () => {
+  it("reports the fixture's concrete counts, not its own arithmetic", () => {
+    // Deliberately literal. Asserting `keys(checked).length === total` would
+    // restate the three lines under test and stay green even if the query lost
+    // its `WHERE trip_id = ?`, because the map and the counts come from the
+    // same wrong row set. Concrete numbers catch that.
     const userId = makeUser("tick-counts@nomad.test");
     const tripId = makeTrip(userId);
     sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: CLOTHING_SHIRTS, checked: true });
 
     const state = readTickState(tripId);
-    expect(Object.keys(state.checked)).toHaveLength(state.total);
-    expect(
-      Object.values(state.checked).filter((value) => value).length,
-    ).toBe(state.checkedCount);
+    expect(state.total).toBe(13);
+    expect(state.checkedCount).toBe(1);
+    expect(state.checked[CLOTHING_SHIRTS]).toBe(true);
+    expect(state.checked[CLOTHING_LINERS]).toBe(false);
+  });
+
+  it("counts only the named trip's rows", () => {
+    // The assertion the tautological version could not make: a second trip's
+    // rows must not reach these numbers.
+    const userId = makeUser("tick-scope@nomad.test");
+    const mine = makeTrip(userId);
+    const other = makeTrip(makeUser("tick-scope-other@nomad.test"));
+    sync(mine, packingList());
+    sync(other, packingList());
+    setChecked({ tripId: mine, userId, itemKey: CLOTHING_SHIRTS, checked: true });
+
+    expect(readTickState(mine).total).toBe(13);
+    expect(readTickState(other).total).toBe(13);
+    expect(readTickState(other).checkedCount).toBe(0);
   });
 });
 
