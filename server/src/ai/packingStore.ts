@@ -33,14 +33,21 @@ export interface PackingTickState {
 const ITEM_KEY = /^[0-9a-f]{16}$/;
 
 /**
- * Ownership lives in the SQL, never in a read-then-write.
- *
  * `trip_packing` has no `user_id` column on purpose: `trips.user_id` is the one
  * owner, and a copy here would be a second source of truth that can disagree
- * with the first. So every statement that touches a trip's rows resolves the
- * owner through `trips` in the same statement — a separate ownership SELECT
- * followed by an unscoped write is a TOCTOU gap and, more prosaically, the copy
- * somebody forgets to paste. `changes === 0` is the caller's 404 signal.
+ * with the first.
+ *
+ * Precisely which statements enforce that, because a comment claiming more than
+ * the code does is worse than none:
+ *
+ * - `setChecked` resolves the owner **inside its own UPDATE**, so a non-owner's
+ *   write changes zero rows. `changes === 0` is the caller's 404 signal.
+ * - `syncTripPacking` re-checks ownership inside its transaction, because its
+ *   caller resolved the trip before awaiting a vendor call.
+ * - The read paths (`readTickState`, `readStoredList`) are scoped by `trip_id`
+ *   alone and require a caller that has *already* resolved ownership. Both
+ *   callers in `trips.ts` do, via a `user_id`-scoped lookup whose absence is
+ *   the 404.
  */
 const OWNED_TRIP = "(SELECT id FROM trips WHERE id = ? AND user_id = ?)";
 
@@ -183,9 +190,25 @@ function pruneStatement(keyCount: number): Statement {
  */
 export function syncTripPacking(
   tripId: number,
+  userId: number,
   list: PackingList,
-): PackingTickState {
-  const sync = db.transaction(() => {
+): PackingTickState | null {
+  const sync = db.transaction((): PackingTickState | null => {
+    // Re-resolved *inside* the transaction, not by the caller beforehand.
+    // The AI route resolves the trip, then awaits a vendor call that can take
+    // tens of seconds — better-sqlite3 is synchronous, so that await is the
+    // only yield point in the request and it is a wide one. A DELETE
+    // /api/trips/:id landing in that window removes the trip and its rows, and
+    // an unguarded sync would then re-insert forty rows for a trip that no
+    // longer exists. PRAGMA foreign_keys is off, so nothing rejects them and
+    // the cascade has already run: they are unreachable dead storage forever.
+    //
+    // Not a cross-user leak — trips.id is AUTOINCREMENT, so an id is never
+    // reused and those rows can never be adopted by somebody else's trip — but
+    // a broken invariant, and this is the only place it can be closed without
+    // a gap.
+    if (!ownsTrip(tripId, userId)) return null;
+
     const keys: string[] = [];
     let sortOrder = 0;
     for (const category of list.categories) {
@@ -210,10 +233,12 @@ export function syncTripPacking(
     } else {
       pruneStatement(keys.length).run(tripId, ...keys);
     }
+    // Read back inside the transaction so the counts describe exactly the rows
+    // just written, with no window for another writer in between.
+    return readTickState(tripId);
   });
-  sync();
 
-  return readTickState(tripId);
+  return sync();
 }
 
 interface TickRow {

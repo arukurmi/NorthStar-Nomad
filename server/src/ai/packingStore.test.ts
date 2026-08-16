@@ -13,6 +13,7 @@ import {
   readTickState,
   setChecked,
   syncTripPacking,
+  type PackingTickState,
 } from "./packingStore.js";
 import type { TravelMode } from "../types.js";
 
@@ -167,12 +168,27 @@ const GEAR_TOOL_KIT = itemKeyFor("Gear", "Tool kit");
 const GEAR_HEADLAMP = itemKeyFor("Gear", "Headlamp");
 const MODE_HELMET = itemKeyFor("Mode — Bike", "Helmet");
 
+
+/**
+ * Syncs as the trip's real owner. syncTripPacking re-checks ownership inside
+ * its own transaction, so every call has to name a user — that check is the
+ * point, and a helper that guessed would defeat it.
+ */
+function sync(tripId: number, list: PackingList): PackingTickState {
+  const owner = db
+    .prepare("SELECT user_id AS userId FROM trips WHERE id = ?")
+    .get(tripId) as { userId: number } | undefined;
+  const state = syncTripPacking(tripId, owner?.userId ?? -1, list);
+  if (!state) throw new Error(`sync helper: trip ${tripId} has no owner`);
+  return state;
+}
+
 describe("syncTripPacking", () => {
   it("inserts one row per item across every category", () => {
     const tripId = makeTrip(makeUser("sync-insert@nomad.test"));
     const list = packingList();
 
-    const state = syncTripPacking(tripId, list);
+    const state = sync(tripId, list);
 
     expect(rows(tripId)).toHaveLength(13);
     expect(state.total).toBe(13);
@@ -187,7 +203,7 @@ describe("syncTripPacking", () => {
   it("stores sort_order as the flattened index across the whole list", () => {
     const tripId = makeTrip(makeUser("sync-order@nomad.test"));
     const list = packingList();
-    syncTripPacking(tripId, list);
+    sync(tripId, list);
 
     const stored = rows(tripId);
     // 0..n-1 with no restart at a category boundary — the profile card renders
@@ -219,11 +235,11 @@ describe("syncTripPacking", () => {
     // would silently reset a list the user had been working through for a week.
     const userId = makeUser("sync-preserve@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: CLOTHING_SHIRTS, checked: true });
     setChecked({ tripId, userId, itemKey: MODE_HELMET, checked: true });
 
-    const state = syncTripPacking(tripId, packingList());
+    const state = sync(tripId, packingList());
 
     expect(state.checked[CLOTHING_SHIRTS]).toBe(true);
     expect(state.checked[MODE_HELMET]).toBe(true);
@@ -234,7 +250,7 @@ describe("syncTripPacking", () => {
   it("refreshes label, qty and reason without disturbing checked", () => {
     const userId = makeUser("sync-refresh@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: CLOTHING_LINERS, checked: true });
 
     // Cosmetic drift only: "Rain liners" and "rain  liners" slug identically,
@@ -246,7 +262,7 @@ describe("syncTripPacking", () => {
       qty: 2,
       reason: "The pass is wet from noon on.",
     };
-    const state = syncTripPacking(tripId, parsePackingList(raw, "bike"));
+    const state = sync(tripId, parsePackingList(raw, "bike"));
 
     const row = rowFor(tripId, CLOTHING_LINERS);
     expect(row?.label).toBe("rain  liners");
@@ -261,12 +277,12 @@ describe("syncTripPacking", () => {
 
   it("prunes items the model dropped so total stays exact", () => {
     const tripId = makeTrip(makeUser("sync-prune@nomad.test"));
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     expect(rowFor(tripId, GEAR_HEADLAMP)).toBeDefined();
 
     const raw = rawList();
     raw.categories[1].items.splice(3, 1); // drop "Headlamp"
-    const state = syncTripPacking(tripId, parsePackingList(raw, "bike"));
+    const state = sync(tripId, parsePackingList(raw, "bike"));
 
     // A row nobody renders would otherwise sit in the denominator forever.
     expect(rowFor(tripId, GEAR_HEADLAMP)).toBeUndefined();
@@ -277,13 +293,13 @@ describe("syncTripPacking", () => {
   it("keeps ticks on surviving items while pruning others in the same re-sync", () => {
     const userId = makeUser("sync-prune-tick@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: GEAR_TOOL_KIT, checked: true });
     setChecked({ tripId, userId, itemKey: GEAR_HEADLAMP, checked: true });
 
     const raw = rawList();
     raw.categories[1].items.splice(3, 1);
-    const state = syncTripPacking(tripId, parsePackingList(raw, "bike"));
+    const state = sync(tripId, parsePackingList(raw, "bike"));
 
     expect(state.checked[GEAR_TOOL_KIT]).toBe(true);
     expect(state.checkedCount).toBe(1);
@@ -293,15 +309,15 @@ describe("syncTripPacking", () => {
   it("does not resurrect a tick when a pruned item comes back", () => {
     const userId = makeUser("sync-resurrect@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: GEAR_HEADLAMP, checked: true });
 
     const pruned = rawList();
     pruned.categories[1].items.splice(3, 1);
-    syncTripPacking(tripId, parsePackingList(pruned, "bike"));
+    sync(tripId, parsePackingList(pruned, "bike"));
     // The row was deleted, so the third sync inserts a brand new one — the tick
     // went with the row rather than lingering somewhere to be reapplied.
-    const state = syncTripPacking(tripId, packingList());
+    const state = sync(tripId, packingList());
 
     expect(state.checked[GEAR_HEADLAMP]).toBe(false);
     expect(state.checkedCount).toBe(0);
@@ -312,8 +328,8 @@ describe("syncTripPacking", () => {
     const userId = makeUser("sync-scope@nomad.test");
     const first = makeTrip(userId);
     const second = makeTrip(userId, { destinationId: "ladakh" });
-    syncTripPacking(first, packingList());
-    syncTripPacking(second, packingList());
+    sync(first, packingList());
+    sync(second, packingList());
 
     setChecked({ tripId: first, userId, itemKey: MODE_HELMET, checked: true });
 
@@ -324,18 +340,18 @@ describe("syncTripPacking", () => {
 
     const raw = rawList();
     raw.categories[1].items.splice(3, 1);
-    syncTripPacking(second, parsePackingList(raw, "bike"));
+    sync(second, parsePackingList(raw, "bike"));
     expect(readTickState(first).total).toBe(13);
     expect(readTickState(second).total).toBe(12);
   });
 
   it("removes every row when the list has no items left", () => {
     const tripId = makeTrip(makeUser("sync-empty@nomad.test"));
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     // `NOT IN ()` is a syntax error, so the empty case takes the unconditional
     // delete — which is also the correct meaning.
-    const state = syncTripPacking(tripId, { summary: "None.", categories: [] });
+    const state = sync(tripId, { summary: "None.", categories: [] });
 
     expect(rows(tripId)).toEqual([]);
     expect(state).toEqual({ checked: {}, checkedCount: 0, total: 0 });
@@ -355,7 +371,7 @@ describe("readTickState", () => {
   it("counts are derived from the rows, so total cannot disagree with checked", () => {
     const userId = makeUser("tick-counts@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: CLOTHING_SHIRTS, checked: true });
 
     const state = readTickState(tripId);
@@ -374,7 +390,7 @@ describe("readStoredList", () => {
 
   it("groups by category in sort_order and keeps item order within a category", () => {
     const tripId = makeTrip(makeUser("stored-order@nomad.test"));
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     const stored = readStoredList(tripId, "bike");
     expect(stored.map((category) => category.name)).toEqual([
@@ -395,7 +411,7 @@ describe("readStoredList", () => {
 
   it("flags exactly the category matching MODE_CATEGORY_TITLE for the mode", () => {
     const tripId = makeTrip(makeUser("stored-mode@nomad.test"));
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     const stored = readStoredList(tripId, "bike");
     const flagged = stored.filter((category) => category.modeCategory);
@@ -410,7 +426,7 @@ describe("readStoredList", () => {
 
   it("omits reason rather than returning null", () => {
     const tripId = makeTrip(makeUser("stored-reason@nomad.test"));
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     const clothing = readStoredList(tripId, "bike")[0];
     const liners = clothing.items.find(
@@ -430,7 +446,7 @@ describe("readStoredList", () => {
   it("round-trips checked as a boolean, not 0/1", () => {
     const userId = makeUser("stored-boolean@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
     setChecked({ tripId, userId, itemKey: MODE_HELMET, checked: true });
 
     const items = readStoredList(tripId, "bike").flatMap(
@@ -449,7 +465,7 @@ describe("setChecked", () => {
   it("round-trips a tick and an untick", () => {
     const userId = makeUser("set-roundtrip@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     const ticked = setChecked({
       tripId,
@@ -473,7 +489,7 @@ describe("setChecked", () => {
   it("returns counts read back from the database, not echoed arithmetic", () => {
     const userId = makeUser("set-authoritative@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     setChecked({ tripId, userId, itemKey: GEAR_TOOL_KIT, checked: true });
     const second = setChecked({
@@ -492,7 +508,7 @@ describe("setChecked", () => {
   it("is idempotent when the item is already checked", () => {
     const userId = makeUser("set-idempotent@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     const first = setChecked({
       tripId,
@@ -513,7 +529,7 @@ describe("setChecked", () => {
     const owner = makeUser("set-owner@nomad.test");
     const stranger = makeUser("set-stranger@nomad.test");
     const tripId = makeTrip(owner);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     expect(
       setChecked({
@@ -545,7 +561,7 @@ describe("setChecked", () => {
   it("returns null for an item key that is not on this trip's list", () => {
     const userId = makeUser("set-no-item@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     // A well-formed key for an item the model never produced. null covers this
     // identically to "wrong owner", so the 404 is not an existence oracle.
@@ -563,7 +579,7 @@ describe("setChecked", () => {
   it("returns null for a malformed itemKey and writes nothing", () => {
     const userId = makeUser("set-malformed@nomad.test");
     const tripId = makeTrip(userId);
-    syncTripPacking(tripId, packingList());
+    sync(tripId, packingList());
 
     const malformed = [
       "nope",

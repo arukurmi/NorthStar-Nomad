@@ -66,7 +66,12 @@ function modelPayload(mode: TravelMode): RawList {
  */
 function seedPacking(tripId: number, mode: TravelMode): string[] {
   const list = parsePackingList(modelPayload(mode), mode);
-  syncTripPacking(tripId, list);
+  (() => {
+    const owner = db
+      .prepare("SELECT user_id AS userId FROM trips WHERE id = ?")
+      .get(tripId) as { userId: number };
+    syncTripPacking(tripId, owner.userId, list);
+  })();
   return list.categories.flatMap((c) => c.items.map((i) => i.itemKey));
 }
 
