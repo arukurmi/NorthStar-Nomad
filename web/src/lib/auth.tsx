@@ -22,6 +22,14 @@ export interface Trip {
   end: string;
   mode: "flight" | "bike" | "bus";
   status: "planned" | "taken" | "skipped";
+  /**
+   * Packing progress, carried on the list so the profile page can render a
+   * card per trip with no extra requests. Optional because these arrive from
+   * `GET /api/trips` and not from the create or update responses, which return
+   * the bare row.
+   */
+  packing_total?: number;
+  packing_checked?: number;
 }
 
 /** Per-call knobs for {@link AuthState.authFetch}. All optional, all default

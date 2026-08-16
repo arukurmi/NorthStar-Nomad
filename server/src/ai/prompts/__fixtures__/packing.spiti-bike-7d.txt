@@ -1,0 +1,35 @@
+Build a packing checklist for the trip below. These are the only facts you
+have; everything you write must trace back to one of them.
+
+DESTINATION
+Name: Spiti Valley
+Region: Himachal Pradesh
+Country: India
+This is a domestic trip, so Documents needs no passport, visa, plug adapter or foreign currency.
+Tags: cold-desert, road-trip, monasteries, stargazing
+Good for travelling by road: yes
+Days this destination really needs: 6
+
+DATES
+Start: 2026-06-12
+End: 2026-06-18
+Length: 7 days, counting both dates
+Calendar months covered: June
+
+TYPICAL WEATHER FOR THOSE MONTHS
+Coldest low: 6 °C
+Hottest high: 20 °C
+June — Prime circuit weather
+
+TRAVEL MODE
+Travelling by: bike
+There is no baggage hold and no overhead locker: everything either fits in panniers or a tail bag, or it does not come. Whatever is packed will be rained on at speed, so water getting in is a question of when rather than whether. A mechanical failure is a roadside problem with no support and often no signal, so the rider is their own recovery. Hands, knees, neck and eyes are the exposed joints and take the grit, the sun and any impact. Wind chill subtracts several degrees from the temperatures below once moving, so the stated low is optimistic.
+
+Title the mode category exactly: Mode — Bike
+Do not place an item in the mode section that would appear unchanged in a list for a different travel mode. If an item belongs to every mode, it belongs in Clothing, Gear, Documents or Health.
+
+Quantity guide. Copy these numbers; do not compute your own.
+- Items worn fresh every day (t-shirts, underwear, socks): qty 7.
+- Items worn more than once before washing (trousers, shirts, towels): qty 4.
+- Everything worn or carried once (jacket, shoes, charger, documents): qty 1.
+This trip is 7 days long, and the daily number is capped at 7 however long the trip runs: beyond a week assume one laundry stop rather than one garment per day.

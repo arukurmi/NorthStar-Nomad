@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchDestination } from "../../lib/api";
 import type { Destination, TravelMode } from "../../lib/types";
-import { useAuth } from "../../lib/auth";
+import { useAuth, type Trip } from "../../lib/auth";
+import { DestinationTabs, type DestinationTab } from "./DestinationTabs";
+import { PackPanel } from "../Packing/PackPanel";
 
 const MONTH_INITIALS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
 
@@ -35,6 +37,8 @@ export function DestinationDetail({
   const [planState, setPlanState] = useState<
     "idle" | "saving" | "saved" | "declined" | "duplicate"
   >("idle");
+  const [tab, setTab] = useState<DestinationTab>("overview");
+  const [tripId, setTripId] = useState<number | undefined>();
 
   const planTrip = async () => {
     setPlanState("saving");
@@ -49,6 +53,8 @@ export function DestinationDetail({
         }),
       });
       setPlanState("saved");
+      // Newly saved: the Pack tab can now offer ticking without a reload.
+      void findSavedTrip();
     } catch (e) {
       setPlanState(
         (e as Error).message.includes("already") ? "duplicate" : "idle",
@@ -56,10 +62,42 @@ export function DestinationDetail({
     }
   };
 
+  /**
+   * The saved trip for exactly these dates, if there is one. It lets the Pack
+   * tab restore a stored checklist for free instead of showing an idle panel
+   * that invites the user to buy the list again.
+   */
+  const findSavedTrip = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { trips } = await authFetch<{ trips: Trip[] }>("/api/trips");
+      const match = trips.find(
+        (t) =>
+          t.destination_id === id &&
+          t.start === range.start &&
+          t.end === range.end &&
+          t.mode === mode,
+      );
+      setTripId(match?.id);
+    } catch {
+      // Opportunistic: without it the panel still works, it just cannot tick.
+      setTripId(undefined);
+    }
+  }, [authFetch, user, id, range.start, range.end, mode]);
+
+  useEffect(() => {
+    void findSavedTrip();
+  }, [findSavedTrip]);
+
   useEffect(() => {
     let cancelled = false;
     setDest(null);
     setError(null);
+    // A new destination is a new subject: keep the drawer on Overview rather
+    // than dropping someone into a Pack tab for a place they have not read
+    // about yet — and, more practically, PackPanel unmounts, so its idle state
+    // is restored and no stale list from the previous destination can show.
+    setTab("overview");
     fetchDestination(id)
       .then((d) => {
         if (!cancelled) setDest(d);
@@ -101,6 +139,26 @@ export function DestinationDetail({
         </p>
       </div>
 
+      <div className="mt-4">
+        <DestinationTabs value={tab} onChange={setTab} />
+      </div>
+
+      {/* Hidden rather than unmounted. Unmounting resets usePacking to `idle`,
+          so glancing at Overview and coming back would throw away a generated
+          list and cost the user another round trip and one of their thirty
+          hourly slots for an answer they had already been shown. */}
+      <div className={tab === "pack" ? "mt-6" : "hidden"}>
+        <PackPanel
+          destinationId={id}
+          destinationName={dest.name}
+          range={range}
+          mode={mode}
+          tripId={tripId}
+        />
+      </div>
+
+      {tab === "overview" && (
+        <>
       <p className="mt-3 text-starlight/85">{dest.blurb}</p>
       <p className="mt-2 text-sm text-muted">
         Best for: {dest.bestFor} · Ideal trip: {dest.idealDays}+ day
@@ -204,6 +262,8 @@ export function DestinationDetail({
           </span>
         ))}
       </div>
+        </>
+      )}
     </div>
   );
 }
