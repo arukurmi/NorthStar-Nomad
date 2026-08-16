@@ -178,3 +178,89 @@ export interface UsageResponse {
   usage: UsageSummaryRow[];
   totals: UsageTotals;
 }
+
+/* ------------------------------------------------------------------ *
+ * F2 — packing lists. Mirrors `server/src/ai/packing.ts`,
+ * `server/src/ai/packingStore.ts` and the two trip-scoped routes.
+ * ------------------------------------------------------------------ */
+
+export interface PackingItem {
+  /**
+   * 16 lowercase hex characters, derived server-side. The client only ever
+   * echoes one back; it never computes a key, which is why a regenerated list
+   * keeps its ticks without the UI knowing anything about how they are derived.
+   */
+  itemKey: string;
+  label: string;
+  qty: number;
+  /** Absent when the item is obvious. Never rendered as an empty line. */
+  reason?: string;
+}
+
+export interface PackingCategory {
+  name: string;
+  /** The one mode-specific section. Expanded by default, so the client never
+   *  has to string-match a heading to decide which that is. */
+  modeCategory: boolean;
+  items: PackingItem[];
+}
+
+export interface PackingList {
+  summary: string;
+  categories: PackingCategory[];
+}
+
+/** Per-user tick state. Deliberately outside `PackingList`: the list is served
+ *  from a cache shared by every user, and this never is. */
+export interface PackingTripState {
+  id: number;
+  /** itemKey → checked, indexed directly by the checkbox rows. */
+  checked: Record<string, boolean>;
+  checkedCount: number;
+  total: number;
+}
+
+export interface PackingRequest {
+  destinationId: string;
+  start: string;
+  end: string;
+  mode: TravelMode;
+  tripId?: number;
+  provider?: ProviderId;
+}
+
+export interface PackingResponse {
+  cached: boolean;
+  /** ISO-8601 with a zone marker. The stored row's time on a hit. */
+  generatedAt: string;
+  packing: PackingList;
+  /** Absent when no saved trip matches — the signal to disable ticking. */
+  trip?: PackingTripState;
+}
+
+/** A stored item, as the trip-scoped read returns it. Carries `checked`, which
+ *  `PackingItem` never does. */
+export interface StoredPackingItem extends PackingItem {
+  checked: boolean;
+}
+
+export interface StoredPackingCategory {
+  name: string;
+  modeCategory: boolean;
+  items: StoredPackingItem[];
+}
+
+export interface TripPackingResponse {
+  /** `[]` for a trip with nothing generated — a correct answer, not an error. */
+  categories: StoredPackingCategory[];
+  checkedCount: number;
+  total: number;
+}
+
+export interface PackingCheckResponse {
+  itemKey: string;
+  checked: boolean;
+  /** Authoritative, recomputed server-side — never the client's arithmetic. */
+  checkedCount: number;
+  total: number;
+}
