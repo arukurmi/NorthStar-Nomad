@@ -27,7 +27,7 @@ export function DestinationTabs({ value, onChange }: DestinationTabsProps) {
     // It behaves like a toggle group, so it is described as one.
     <div
       aria-label="Destination sections"
-      className="inline-flex rounded-full bg-ink p-1 font-numeric text-xs uppercase tracking-wide"
+      className="inline-flex max-w-full flex-wrap rounded-full bg-ink p-1 font-numeric text-xs uppercase tracking-wide"
     >
       {TABS.map((tab) => (
         <button

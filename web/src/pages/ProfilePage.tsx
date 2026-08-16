@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { useAuth, type Trip } from "../lib/auth";
 import { todayIso } from "../lib/dates";
 import { AiKeysSection } from "../components/Ai/AiKeysSection";
+import { TripPackingCard } from "../components/Packing/TripPackingCard";
 
 const MODE_EMOJI = { flight: "✈️", bike: "🏍️", bus: "🚌" } as const;
 
@@ -26,7 +27,8 @@ function TripRow({
 }) {
   const ended = trip.end < todayIso();
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-raise p-4 ring-1 ring-white/5">
+    <li className="rounded-xl bg-raise p-4 ring-1 ring-white/5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <p className="font-display font-semibold">
           {MODE_EMOJI[trip.mode]} {trip.destination_name}
@@ -76,6 +78,17 @@ function TripRow({
           🗑
         </button>
       </div>
+      </div>
+      {/* Only on trips still ahead: a checklist for a trip already taken is
+          history, and the card renders nothing at all when no list exists. */}
+      {trip.status === "planned" && (
+        <TripPackingCard
+          tripId={trip.id}
+          mode={trip.mode}
+          total={trip.packing_total ?? 0}
+          checked={trip.packing_checked ?? 0}
+        />
+      )}
     </li>
   );
 }

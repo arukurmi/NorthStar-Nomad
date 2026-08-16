@@ -594,3 +594,91 @@ describe("DELETE /api/trips/:id packing cascade", () => {
     expect(checkedFlag(bobTrip, bobKeys[0])).toBe(1);
   });
 });
+
+
+describe("GET /api/trips packing counts", () => {
+  it("reports 0/0 for a trip with nothing generated", async () => {
+    const token = await register("list-empty@nomad.test");
+    await tripFor(token, {
+      destinationId: "goa",
+      start: "2027-11-05",
+      end: "2027-11-08",
+    });
+
+    const res = await request(app)
+      .get("/api/trips")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.trips[0].packing_total).toBe(0);
+    expect(res.body.trips[0].packing_checked).toBe(0);
+  });
+
+  it("counts a generated list and the ticks on it", async () => {
+    const token = await register("list-counts@nomad.test");
+    const id = await tripFor(token, {
+      destinationId: "goa",
+      start: "2027-11-12",
+      end: "2027-11-15",
+    });
+    const keys = seedPacking(id, "flight");
+    await check(token, id, { itemKey: keys[0], checked: true });
+    await check(token, id, { itemKey: keys[1], checked: true });
+
+    const res = await request(app)
+      .get("/api/trips")
+      .set("Authorization", `Bearer ${token}`);
+    const row = res.body.trips.find((t: { id: number }) => t.id === id);
+    // Derived from the fixture, not hardcoded: a hardcoded count silently
+    // stops testing the aggregate the moment the fixture changes size.
+    expect(row.packing_total).toBe(keys.length);
+    expect(row.packing_checked).toBe(2);
+  });
+
+  it("keeps one user's counts out of another's list", async () => {
+    // The aggregate is a LEFT JOIN over a table with no user_id, so this is
+    // the assertion that the join cannot pull in a stranger's rows.
+    const mine = await register("list-mine@nomad.test");
+    const theirs = await register("list-theirs@nomad.test");
+    const myTrip = await tripFor(mine, {
+      destinationId: "goa",
+      start: "2027-12-01",
+      end: "2027-12-04",
+    });
+    const theirTrip = await tripFor(theirs, {
+      destinationId: "goa",
+      start: "2027-12-01",
+      end: "2027-12-04",
+    });
+    seedPacking(theirTrip, "flight");
+
+    const res = await request(app)
+      .get("/api/trips")
+      .set("Authorization", `Bearer ${mine}`);
+    expect(res.body.trips).toHaveLength(1);
+    expect(res.body.trips[0].id).toBe(myTrip);
+    expect(res.body.trips[0].packing_total).toBe(0);
+  });
+
+  it("still returns every column the list returned before", async () => {
+    // The projection widened from `*` to `t.*` plus two aggregates. Anything
+    // the profile page already reads must survive that.
+    const token = await register("list-columns@nomad.test");
+    await tripFor(token, {
+      destinationId: "goa",
+      start: "2027-12-20",
+      end: "2027-12-23",
+    });
+
+    const res = await request(app)
+      .get("/api/trips")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.body.trips[0]).toMatchObject({
+      destination_id: "goa",
+      destination_name: expect.any(String),
+      start: "2027-12-20",
+      end: "2027-12-23",
+      mode: expect.any(String),
+      status: "planned",
+    });
+  });
+});

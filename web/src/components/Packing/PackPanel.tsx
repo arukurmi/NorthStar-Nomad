@@ -139,11 +139,11 @@ export function PackPanel({
         />
       ))}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
         {/* Honesty about age and cost, per cluster principle 5: a cached answer
             may be days old and the user paid nothing for it. Saying so is what
             makes the saving visible rather than invisible. */}
-        <p className="font-numeric text-xs text-muted">
+        <p className="min-w-0 font-numeric text-xs text-muted">
           {cached
             ? `Generated ${ago(generatedAt)} · free, from cache`
             : "Generated just now · billed to your provider"}
@@ -151,7 +151,7 @@ export function PackPanel({
         <button
           type="button"
           onClick={generate}
-          className="rounded-full bg-raise px-3 py-1.5 font-numeric text-xs text-muted transition hover:text-starlight"
+          className="shrink-0 rounded-full bg-raise px-3 py-1.5 font-numeric text-xs text-muted transition hover:text-starlight"
         >
           ↻ Rebuild
         </button>

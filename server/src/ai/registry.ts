@@ -63,10 +63,11 @@ export function resetProviders(): void {
 }
 
 const FAKE_IN_PROD = [
-  "FATAL: NOMAD_AI_FAKE=1 on a deployed host.",
+  "FATAL: NOMAD_AI_FAKE=1 outside an explicit test or development process.",
   "That replaces every AI provider with a stub: any string is accepted as a",
   "valid API key, and fabricated answers are written to the shared ai_cache and",
-  "served to every user for the next 30 days. Unset it and restart.",
+  "served to every user for the next 30 days.",
+  "Unset it, or set NODE_ENV=development if this really is a dev machine.",
 ].join("\n");
 
 /**
@@ -83,7 +84,16 @@ export function assertProvidersConfigured(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (env.NOMAD_AI_FAKE !== "1") return;
-  if (env.NODE_ENV !== "production" && !looksDeployed(env)) return;
+  // Fails **closed**: the fakes are allowed only where NODE_ENV explicitly says
+  // test or development. The first version of this asked "does this look
+  // deployed?" and allowed anything it did not recognise — but `looksDeployed`
+  // knows a fixed list of platform markers, so a bare VM, a plain Docker image
+  // or an EC2 box with neither NODE_ENV nor a marker would have run the fakes
+  // silently. Given the blast radius — any string accepted as an API key, and
+  // fabricated lists written into the global cache and served to strangers for
+  // thirty days — an unrecognised host must refuse rather than proceed.
+  const allowed = env.NODE_ENV === "test" || env.NODE_ENV === "development";
+  if (allowed && !looksDeployed(env)) return;
   process.stderr.write(`${FAKE_IN_PROD}\n`);
   process.exit(1);
 }

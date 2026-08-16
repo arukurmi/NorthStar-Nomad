@@ -91,10 +91,42 @@ tripsRouter.post("/api/trips", (req: AuthedRequest, res) => {
   res.status(201).json({ trip });
 });
 
+/**
+ * The two packing counts ride along on the list rather than being fetched per
+ * row. The profile page renders a collapsed progress card for every trip, and
+ * the alternative is one GET /api/trips/:id/packing per row on mount — an N+1
+ * for a progress bar. The full checklist is still fetched lazily, only when a
+ * card is actually expanded.
+ *
+ * `t.*` returns exactly the columns `SELECT *` returned before, so nothing new
+ * is exposed; the aggregate is additive and reads 0/0 for a trip with no list.
+ */
 tripsRouter.get("/api/trips", (req: AuthedRequest, res) => {
   const trips = db
-    .prepare("SELECT * FROM trips WHERE user_id = ? ORDER BY start DESC")
-    .all(req.userId);
+    .prepare(
+      `SELECT t.*,
+              COALESCE(p.total, 0)   AS packing_total,
+              COALESCE(p.checked, 0) AS packing_checked
+         FROM trips t
+         LEFT JOIN (
+               SELECT trip_id,
+                      COUNT(*)      AS total,
+                      SUM(checked)  AS checked
+                 FROM trip_packing
+                -- Correlated to this caller. Without the WHERE, SQLite
+                -- materialises the aggregate over *every* user's rows on every
+                -- request (confirmed with EXPLAIN QUERY PLAN: MATERIALIZE p,
+                -- then a full SCAN of trip_packing). One account generating
+                -- lists at the route's own rate limit adds ~1,400 rows an hour,
+                -- and every other user's profile page would pay for that scan
+                -- synchronously on better-sqlite3's single thread.
+                WHERE trip_id IN (SELECT id FROM trips WHERE user_id = ?)
+                GROUP BY trip_id
+              ) p ON p.trip_id = t.id
+        WHERE t.user_id = ?
+        ORDER BY t.start DESC`,
+    )
+    .all(req.userId, req.userId);
   res.json({ trips });
 });
 
@@ -122,6 +154,7 @@ tripsRouter.get("/api/trips/check-in", (req: AuthedRequest, res) => {
  * `GET /api/trips/:id` later cannot quietly swallow this route.
  */
 tripsRouter.get("/api/trips/:id/packing", (req: AuthedRequest, res) => {
+  const userId = req.userId as number; // requireAuth guarantees this
   const tripId = parseTripId(req.params.id);
   if (tripId === null) {
     sendPackingError(res, 404, "not_found", "no such trip");
@@ -131,16 +164,16 @@ tripsRouter.get("/api/trips/:id/packing", (req: AuthedRequest, res) => {
   // miss. `mode` is what `readStoredList` needs to flag the mode category.
   const trip = db
     .prepare("SELECT mode FROM trips WHERE id = ? AND user_id = ?")
-    .get(tripId, req.userId) as TripModeRow | undefined;
+    .get(tripId, userId) as TripModeRow | undefined;
   if (!trip) {
     sendPackingError(res, 404, "not_found", "no such trip");
     return;
   }
   // An owned trip with nothing generated yet answers `[]` and zero counts. An
   // empty list is a correct answer here, not an error.
-  const { checkedCount, total } = readTickState(tripId);
+  const { checkedCount, total } = readTickState(tripId, userId);
   res.json({
-    categories: readStoredList(tripId, trip.mode),
+    categories: readStoredList(tripId, trip.mode, userId),
     checkedCount,
     total,
   });

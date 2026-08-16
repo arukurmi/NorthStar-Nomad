@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| **Status** | Ready to implement |
+| **Status** | Delivered — five phases, merged into `feat/f2-packing-list` |
 | **Branch** | `feat/f2-packing-list` |
 | **PRD** | `docs/prds/F2-packing-list-generator.md` |
 | **Cluster spec** | `docs/superpowers/specs/2026-08-14-byok-ai-planning-cluster-design.md` |
@@ -857,7 +857,28 @@ required for anything earlier to compile.
 | 02 | `f2/p02-packing-route` | `POST /api/ai/packing`, cache integration, throttle, usage | ~9 |
 | 03 | `f2/p03-tick-state` | `packingStore.ts`, tick + read endpoints, trip delete cascade, trip wiring in the AI route | ~11 |
 | 04 | `f2/p04-pack-tab` | Web types + client, `usePacking`, packing components, Pack tab | ~10 |
-| 05 | `f2/p05-profile-card-docs` | Trips list aggregate, profile packing card, mobile pass, threat-model + README | ~9 |
+| 05 | `f2/p05-profile-card` | Trips list aggregate, profile packing card, mobile pass, threat-model + README | ~15 |
+
+### What the phases changed about this design
+
+Recorded because a design document that quietly matches the code it did not
+predict is not worth reading:
+
+- **`PACKING_CACHE_LIMIT` is 2000, not 500** — the key is namespaced by provider
+  *and* model, so 500 meant eviction firing constantly across three vendors.
+- **`provider` is required on `CacheKeyInput`**, not optional. Optional would
+  have left "remember to pass one" as a convention in four route files.
+- **`evictFeature` takes a `protect` key.** The `created_at` tie-break alone did
+  not stop a fresh write being swept by its own sweep, which would have re-billed
+  the user for the answer just bought.
+- **`syncTripPacking` takes a `userId`** and re-checks ownership inside its
+  transaction, because the caller resolves the trip and then awaits a vendor
+  call.
+- **A mismatched `tripId` is a 400**, not a silently ignored field.
+- **`buildGrounding` refuses ranges it cannot ground.** Without that, an
+  unparseable date produced `Math.min()` of nothing — `Infinity °C` in a prompt,
+  answered confidently and cached for thirty days.
+- **The cache-hit path re-runs the validator** rather than trusting a stored row.
 
 Reconciliation with the PRD's ten micro-tasks: 1–2 → P01; 3 → P02; 4 is
 **split** (DDL rides with P01 because `db.ts` is one `db.exec()` block and

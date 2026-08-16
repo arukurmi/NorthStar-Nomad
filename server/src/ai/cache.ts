@@ -161,17 +161,24 @@ const evictOldest = db.prepare(`
  * a loop. Age-based expiry is `getCached`'s `maxAgeMs`; this bound is about
  * space, and for space, write recency is a fine proxy.
  */
+/**
+ * SQLite reads a negative LIMIT as "no limit", so a negative `keep` makes the
+ * subquery return every key and the sweep delete nothing. A bound that silently
+ * becomes unbounded is the single failure this mechanism exists to prevent, so
+ * it throws — and both entry points check, rather than only the exported one.
+ */
+function assertKeep(keep: number): void {
+  if (!Number.isInteger(keep) || keep < 0) {
+    throw new RangeError("cache eviction: keep must be a non-negative integer");
+  }
+}
+
 export function evictFeature(
   feature: AiFeature,
   keep: number,
   opts?: { protect?: string },
 ): number {
-  // SQLite reads a negative LIMIT as "no limit", so `evictFeature(f, -1)` would
-  // quietly delete nothing at all. A bound that silently becomes unbounded is
-  // the single failure this function exists to prevent, so it is a throw.
-  if (!Number.isInteger(keep) || keep < 0) {
-    throw new RangeError("evictFeature: keep must be a non-negative integer");
-  }
+  assertKeep(keep);
   // "" cannot collide with a real key — `assertCacheKey` guarantees every
   // stored key is 64 hex characters — so it is a safe "protect nothing"
   // sentinel and keeps the statement single-shape. NULL would not work:
@@ -209,6 +216,7 @@ export function putCached<T>(
 ): void {
   assertCacheKey(key);
   const keep = opts?.keep;
+  if (keep !== undefined) assertKeep(keep);
   if (keep === undefined) {
     upsertEntry.run(key, feature, JSON.stringify(payload));
     return;

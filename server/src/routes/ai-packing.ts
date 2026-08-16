@@ -395,8 +395,16 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
     // allowed to lose it. The completion is already paid for; failing the
     // request because a cache write hit a locked database would charge the user
     // and hand them a 502 blaming the vendor for our storage fault.
+    // Two separate guards, not one. Sharing a try meant a SQLITE_BUSY on the
+    // cache write silently dropped the billing record for a completion the
+    // user had genuinely paid for — the accounting would then under-report
+    // exactly the calls that cost money.
     try {
       putCached(key, "packing", result.data, { keep: PACKING_CACHE_LIMIT });
+    } catch (err) {
+      logRouteFault("cache-write", dest.id, err);
+    }
+    try {
       recordUsage({
         userId,
         feature: "packing",
@@ -407,7 +415,7 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
         cached: false,
       });
     } catch (err) {
-      logRouteFault("persist", dest.id, err);
+      logRouteFault("usage", dest.id, err);
     }
 
     res.json({

@@ -702,3 +702,35 @@ describe("ownsTrip", () => {
     expect(ownsTrip(987654321, owner)).toBe(false);
   });
 });
+
+describe("owner-scoped reads", () => {
+  it("returns nothing for a reader who does not own the trip", () => {
+    // Both callers resolve ownership before getting here, so this is defence
+    // in depth rather than a live hole — but it is the one place the "ownership
+    // lives in the SQL" rule was a calling convention, and a convention is what
+    // the third caller forgets.
+    const owner = makeUser("reads-owner@nomad.test");
+    const stranger = makeUser("reads-stranger@nomad.test");
+    const tripId = makeTrip(owner);
+    sync(tripId, packingList());
+
+    expect(readTickState(tripId, owner).total).toBe(13);
+    expect(readTickState(tripId, stranger)).toEqual({
+      checked: {},
+      checkedCount: 0,
+      total: 0,
+    });
+    expect(readStoredList(tripId, "bike", owner).length).toBeGreaterThan(0);
+    expect(readStoredList(tripId, "bike", stranger)).toEqual([]);
+  });
+
+  it("behaves as before when no user is named", () => {
+    // The unscoped form is still used nowhere that has not already resolved
+    // ownership; keeping it means this change added a guard rather than
+    // rewriting every call site.
+    const owner = makeUser("reads-unscoped@nomad.test");
+    const tripId = makeTrip(owner);
+    sync(tripId, packingList());
+    expect(readTickState(tripId).total).toBe(13);
+  });
+});
