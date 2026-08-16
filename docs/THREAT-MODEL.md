@@ -243,6 +243,22 @@ treated as a miss and regenerated rather than being served with our UI's trust �
 checkboxes, item keys and all — attached to it. It does not make the row
 trustworthy; it bounds what an untrustworthy row can be.
 
+### 5.5a Concurrent identical misses no longer double-bill
+
+A cache row is written only *after* a completion returns, so before this two
+users asking the same question inside the vendor's latency window both missed,
+both called out, and both paid — for one answer, of which one was immediately
+overwritten by the other's upsert.
+
+`ai/inflight.ts` keys an in-flight promise on the **cache key**, so the second
+caller awaits the first rather than starting its own. The API key is
+deliberately not part of that key: the answer does not depend on whose
+credential bought it, and including it would defeat the saving while putting a
+plaintext credential into a module-level map.
+
+In-process, so it carries the same caveat `rateLimit.ts` does — two instances
+mean two maps and the saving degrades rather than breaking.
+
 ### 5.6 The cache is a cross-user activity oracle, at a price
 
 A user's *first* request for a tuple answering `cached: true`, with a
@@ -354,7 +370,7 @@ oversight.
 | 10 | `NOMAD_AI_FAKE` on a deployed host would serve fabricated answers from the shared cache | Closed — the process refuses to boot unless `NODE_ENV` explicitly says test or development, and never on a platform-marked host. Fails **closed** on an unrecognised host |
 | 11 | The shared cache discloses that *someone* has planned a given trip tuple | Accepted — §5.6. No identity crosses; probing costs a paid completion and self-poisons the row |
 | 12 | `trips` has no UNIQUE constraint, so concurrent creates leave duplicates | Accepted for F2 — pre-existing, and adding the index would fail at boot on any database that already holds duplicates. `packingStore` resolves deterministically to the lowest id |
-| 13 | The tick endpoints are unthrottled | Accepted — each call is one small write plus a re-read, scoped to the caller's own trip, and the generation route in front of them is limited |
+| 13 | The tick endpoints are unthrottled | **Closed** — 600 changes/hour/account. Generous by design: a checklist tops out at 48 items, so the ceiling is for scripts, not for users |
 | 5 | Key-save throttle is per-account and per-process only | Accepted — raises cost, does not eliminate the oracle |
 | 6 | Deleting a key here does not revoke it upstream | Accepted; UI copy gap is an open action (§7) |
 | 7 | Non-production data is encrypted under a public key | Accepted by design; deployed hosts refuse it |
