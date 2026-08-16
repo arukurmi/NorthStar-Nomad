@@ -87,6 +87,8 @@ it — as does any host carrying a platform marker such as `RENDER` or
 | `DELETE /api/ai/keys/:provider` | Remove a stored key |
 | `GET /api/ai/usage` | Per-feature calls and tokens, with cached calls counted separately |
 | `POST /api/ai/packing` | Generate a mode- and weather-aware packing list for a destination and date range |
+| `GET /api/trips/:id/packing` | The saved checklist and tick state for a trip — no AI key required |
+| `POST /api/trips/:id/packing/check` | Tick or untick one item on a trip's checklist |
 
 AI keys are yours: you add your own Anthropic, Gemini or OpenAI key under
 **Profile → AI & Keys**, you pay that provider directly, and the key is

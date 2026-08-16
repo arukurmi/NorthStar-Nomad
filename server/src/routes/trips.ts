@@ -1,11 +1,51 @@
 import { Router } from "express";
+import type { Response } from "express";
 import { db } from "../db.js";
 import { requireAuth, type AuthedRequest } from "../auth/tokens.js";
 import { allDestinations } from "../data/index.js";
+import {
+  readStoredList,
+  readTickState,
+  setChecked,
+} from "../ai/packingStore.js";
+import type { TravelMode } from "../types.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const STATUSES = ["planned", "taken", "skipped"] as const;
 const MODES = ["flight", "bike", "bus"];
+
+/**
+ * The packing routes answer with a machine-readable `code`, matching the AI
+ * routes' `sendLocalError` — the web client branches on it rather than on copy.
+ * The older trip routes below answer `{ error }` with no `code`; retrofitting
+ * them would change a shipped response shape and is a separate change.
+ */
+type PackingErrorCode = "bad_request" | "not_found";
+
+function sendPackingError(
+  res: Response,
+  status: number,
+  code: PackingErrorCode,
+  error: string,
+): void {
+  res.status(status).json({ error, code });
+}
+
+/**
+ * `:id` must be a positive integer, and anything else is a **404 rather than a
+ * 400**: an id that is not an integer cannot name a row, so answering
+ * differently for "malformed" and "not yours" would tell a caller which trip
+ * ids exist. One shape of miss, no oracle.
+ */
+function parseTripId(raw: string): number | null {
+  if (!/^\d+$/.test(raw)) return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+interface TripModeRow {
+  mode: TravelMode;
+}
 
 export const tripsRouter = Router();
 
@@ -69,6 +109,86 @@ tripsRouter.get("/api/trips/check-in", (req: AuthedRequest, res) => {
   res.json({ trips });
 });
 
+/**
+ * The rehydrate-on-reload endpoint. It reads `trip_packing` and nothing else:
+ * no AI key, no provider call, no cache lookup. That is the whole reason the
+ * snapshot design exists — after a reload, or 31 days later when the cache row
+ * has expired, the list *and* the ticks are still here, and the profile page
+ * can render and tick a list with no key configured at all.
+ *
+ * Registered ahead of the `/api/trips/:id` handlers below. Express matches in
+ * registration order and `:id` matches a single segment, so `:id/packing`
+ * cannot be shadowed by it today — the position is deliberate so that adding a
+ * `GET /api/trips/:id` later cannot quietly swallow this route.
+ */
+tripsRouter.get("/api/trips/:id/packing", (req: AuthedRequest, res) => {
+  const tripId = parseTripId(req.params.id);
+  if (tripId === null) {
+    sendPackingError(res, 404, "not_found", "no such trip");
+    return;
+  }
+  // Scoped by user_id, so someone else's trip and no trip at all are the same
+  // miss. `mode` is what `readStoredList` needs to flag the mode category.
+  const trip = db
+    .prepare("SELECT mode FROM trips WHERE id = ? AND user_id = ?")
+    .get(tripId, req.userId) as TripModeRow | undefined;
+  if (!trip) {
+    sendPackingError(res, 404, "not_found", "no such trip");
+    return;
+  }
+  // An owned trip with nothing generated yet answers `[]` and zero counts. An
+  // empty list is a correct answer here, not an error.
+  const { checkedCount, total } = readTickState(tripId);
+  res.json({
+    categories: readStoredList(tripId, trip.mode),
+    checkedCount,
+    total,
+  });
+});
+
+tripsRouter.post("/api/trips/:id/packing/check", (req: AuthedRequest, res) => {
+  const tripId = parseTripId(req.params.id);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const { itemKey, checked } = body;
+  // The key's *shape* is a 400 while a well-shaped key that is not on this
+  // trip's list is a 404. The split is deliberate: a key that is not 16 hex
+  // characters could never exist for any trip, so saying so reveals nothing
+  // about this user's data, and it tells a client with a bug the truth instead
+  // of sending it hunting for a missing item. Existence stays behind the 404.
+  if (
+    typeof itemKey !== "string" ||
+    !/^[0-9a-f]{16}$/.test(itemKey) ||
+    typeof checked !== "boolean"
+  ) {
+    sendPackingError(
+      res,
+      400,
+      "bad_request",
+      "itemKey must be 16 hex characters and checked must be a boolean",
+    );
+    return;
+  }
+  const state =
+    tripId === null
+      ? null
+      : setChecked({ tripId, userId: req.userId as number, itemKey, checked });
+  // One message for all three misses — the trip is someone else's, the trip is
+  // gone, or the item is not on its list. No existence oracle, matching every
+  // other 404 in this file.
+  if (!state) {
+    sendPackingError(res, 404, "not_found", "no such trip or item");
+    return;
+  }
+  // The counts come from the store, recomputed from the rows — never the
+  // client's arithmetic, so two open tabs converge instead of drifting.
+  res.json({
+    itemKey,
+    checked,
+    checkedCount: state.checkedCount,
+    total: state.total,
+  });
+});
+
 tripsRouter.patch("/api/trips/:id", (req: AuthedRequest, res) => {
   const status = req.body?.status;
   if (!STATUSES.includes(status)) {
@@ -89,9 +209,21 @@ tripsRouter.patch("/api/trips/:id", (req: AuthedRequest, res) => {
 });
 
 tripsRouter.delete("/api/trips/:id", (req: AuthedRequest, res) => {
-  const info = db
-    .prepare("DELETE FROM trips WHERE id = ? AND user_id = ?")
-    .run(req.params.id, req.userId);
+  // `PRAGMA foreign_keys` is off — `trip_packing`'s bare REFERENCES is
+  // documentation, not a cascade — so the checklist rows have to go explicitly,
+  // mirroring how `ai-keys.ts` cleans up `ai_prefs`. One transaction, and the
+  // packing delete runs *first* because it resolves ownership through the trip
+  // row: after the trip is gone there is nothing left to scope it by.
+  const remove = db.transaction(() => {
+    db.prepare(
+      `DELETE FROM trip_packing
+        WHERE trip_id = (SELECT id FROM trips WHERE id = ? AND user_id = ?)`,
+    ).run(req.params.id, req.userId);
+    return db
+      .prepare("DELETE FROM trips WHERE id = ? AND user_id = ?")
+      .run(req.params.id, req.userId);
+  });
+  const info = remove();
   if (info.changes === 0) {
     res.status(404).json({ error: "no such trip" });
     return;

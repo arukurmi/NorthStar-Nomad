@@ -28,7 +28,7 @@ Every ambiguity in the PRD, resolved as a decision.
 
 | # | Ambiguity | Decision |
 | --- | --- | --- |
-| A1 | **`tripId` in the request body.** The PRD's example request carries `{ …, "tripId": 42 }`. | **Optional, and belt-and-braces.** The server derives the trip itself from `(userId, destinationId, start, end, mode)` — those four fields already identify it uniquely, and deriving it deletes an IDOR surface outright. `tripId` is still accepted, to keep the PRD's wire shape: when present it must be the caller's own trip **and** must match the tuple, or the request is a `400`. It is never trusted as the sole source of the trip. |
+| A1 | **`tripId` in the request body.** The PRD's example request carries `{ …, "tripId": 42 }`. | **Optional, and belt-and-braces.** The server derives the trip itself from `(userId, destinationId, start, end, mode)` — those four fields already identify it uniquely, and deriving it deletes an IDOR surface outright. `tripId` is still accepted, to keep the PRD's wire shape: when present it must be the caller's own trip **and** must match the tuple, or the request is a `400` — one shared message for malformed, foreign and mismatched, so the field is no existence oracle. Being silently ignored would be worse than refused: the client asked to tick against that trip and would get a list with no checkboxes and no reason why. It is never trusted as the sole source of the trip. |
 | A2 | `itemKey` is absent from the PRD's response example, yet the PRD requires tick state "keyed by a stable item key". | The server derives `itemKey` and returns it inside every item. The client never computes one. |
 | A3 | What `trip_packing` stores. | The **whole checklist snapshot** — category, label, qty, reason, order, checked — not just booleans. See §4.2. This is what makes "tick state survives reload" true even after the cache row has expired, and what lets the profile page render and tick a list with **no AI key configured at all**. |
 | A4 | Can a user generate a list for dates with no saved trip? | Yes. Generation does not require a trip. **Ticking does.** No matching trip → the response omits `trip` and the UI disables the checkboxes with "Save this trip to tick items off". |
@@ -512,7 +512,11 @@ export function findOwnedTrip(args: {
   end: string; mode: TravelMode; tripId?: number;
 }): { id: number } | null;
 
-export function syncTripPacking(tripId: number, list: PackingList): PackingTickState;
+export function syncTripPacking(
+  tripId: number,
+  userId: number,
+  list: PackingList,
+): PackingTickState | null;
 export function readTickState(tripId: number): PackingTickState;
 export function readStoredList(tripId: number, mode: TravelMode): StoredPackingCategory[];
 export function setChecked(args: {
@@ -525,6 +529,16 @@ export function ownsTrip(tripId: number, userId: number): boolean;
 deliberately excluded from the `DO UPDATE SET` list — **that single omission is
 the entire "ticks survive a regenerate" guarantee.** Items the model dropped are
 pruned so `total` stays exact.
+
+It takes a `userId` and re-checks ownership **inside its own transaction**,
+returning `null` when the trip has gone. The caller resolves the trip and then
+awaits a vendor call; better-sqlite3 is synchronous, so that await is the only
+yield point in the request, and a `DELETE /api/trips/:id` landing in it would
+otherwise let the sync re-insert rows for a trip that no longer exists. With
+`PRAGMA foreign_keys` off and the cascade already run, those rows are
+unreachable forever. Not a cross-user leak — `trips.id` is `AUTOINCREMENT`, so
+an id is never reused — but a broken invariant, and the transaction is the only
+place it closes without a gap.
 
 `readStoredList` derives `modeCategory` by comparing the stored `category`
 against `MODE_CATEGORY_TITLE[mode]`, where `mode` comes from the `trips` row. No
