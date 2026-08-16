@@ -123,11 +123,11 @@ export function TripPackingCard({
         }
         className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left"
       >
-        <span className="flex min-w-0 flex-1 items-center gap-3">
-          <span className="font-numeric text-xs uppercase tracking-widest text-marigold">
+        <span className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <span className="shrink-0 font-numeric text-xs uppercase tracking-widest text-marigold">
             🎒 Packing
           </span>
-          <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-raise">
+          <span className="h-1.5 min-w-[3rem] flex-1 overflow-hidden rounded-full bg-raise">
             <span
               className="block h-full rounded-full bg-gradient-to-r from-marigold to-jade transition-all duration-500"
               style={{ width: `${pct}%`, opacity: pct === 0 ? 0 : 1 }}

@@ -55,7 +55,7 @@ export function PackingCategory({
         aria-controls={`packing-${name}`}
         className="flex min-h-[48px] w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-raise/40"
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           <span
             aria-hidden
             className={`font-numeric text-xs text-muted transition-transform ${
