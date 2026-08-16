@@ -250,3 +250,96 @@ describe("regeneration", () => {
     expect(keys).toHaveLength(ITEM_COUNT);
   });
 });
+
+describe("tripId is never an authorisation token", () => {
+  it("rejects another user's trip id without reaching the provider", async () => {
+    const fakes = useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const victim = await withKey("trip-victim@nomad.test");
+    const victimTrip = await saveTrip(victim, SPITI);
+    const attacker = await withKey("trip-attacker@nomad.test");
+
+    const res = await pack(attacker, { ...SPITI, tripId: victimTrip });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("bad_request");
+    // Nothing was generated and, more importantly, nothing was written to the
+    // victim's trip: a 400 that still synced would be a cross-user write.
+    expect(completions(fakes.anthropic as FakeProvider)).toBe(0);
+    expect(rowsFor(victimTrip)).toHaveLength(0);
+  });
+
+  it("gives the same message for a foreign id as for a malformed one", async () => {
+    // No existence oracle: an attacker must not be able to distinguish "that
+    // trip is not yours" from "that is not a trip id" by reading the response.
+    useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const owner = await withKey("trip-oracle-owner@nomad.test");
+    const ownedTrip = await saveTrip(owner, SPITI);
+    const other = await withKey("trip-oracle-other@nomad.test");
+
+    const foreign = await pack(other, { ...SPITI, tripId: ownedTrip });
+    const malformed = await pack(other, { ...SPITI, tripId: 0 });
+    const absent = await pack(other, { ...SPITI, tripId: 9_999_999 });
+    expect(foreign.status).toBe(400);
+    expect(malformed.status).toBe(400);
+    expect(absent.status).toBe(400);
+    expect(foreign.body.error).toBe(malformed.body.error);
+    expect(foreign.body.error).toBe(absent.body.error);
+  });
+
+  it("rejects the caller's own trip id when it does not match the tuple", async () => {
+    useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const token = await withKey("trip-mismatch@nomad.test");
+    // A real trip of theirs, but for different dates than the request names.
+    const otherTrip = await saveTrip(token, {
+      ...SPITI,
+      start: "2026-09-01",
+      end: "2026-09-04",
+    });
+
+    const res = await pack(token, { ...SPITI, tripId: otherTrip });
+    expect(res.status).toBe(400);
+    expect(rowsFor(otherTrip)).toHaveLength(0);
+  });
+
+  it("accepts the caller's own matching trip id", async () => {
+    useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const token = await withKey("trip-ok@nomad.test");
+    const tripId = await saveTrip(token, SPITI);
+
+    const res = await pack(token, { ...SPITI, tripId });
+    expect(res.status).toBe(200);
+    expect(res.body.trip.id).toBe(tripId);
+  });
+});
+
+describe("tick state never reaches the shared cache", () => {
+  it("stores no checked flag in any packing cache payload", async () => {
+    // ai_cache is global. A checked flag in a stored payload would be one
+    // user's private state served verbatim to a stranger, so the guarantee is
+    // structural: PackingList has no such field and the tick state is
+    // assembled after putCached.
+    useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const token = await withKey("trip-cache-purity@nomad.test");
+    const tripId = await saveTrip(token, SPITI);
+
+    const res = await pack(token, SPITI);
+    const [firstKey] = Object.keys(res.body.trip.checked);
+    await request(app)
+      .post(`/api/trips/${tripId}/packing/check`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ itemKey: firstKey, checked: true });
+
+    const payloads = (
+      db
+        .prepare("SELECT payload FROM ai_cache WHERE feature = 'packing'")
+        .all() as Array<{ payload: string }>
+    ).map((r) => r.payload);
+    expect(payloads.length).toBeGreaterThan(0);
+    for (const payload of payloads) {
+      expect(payload).not.toContain("checked");
+      expect(payload).not.toContain("checkedCount");
+      // Not a bare "trip" search — the model's own summary prose legitimately
+      // contains the word. What must never appear is the tick envelope.
+      expect(payload).not.toContain('"trip"');
+    }
+  });
+});
