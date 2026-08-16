@@ -350,3 +350,19 @@ describe("CacheEntry.createdAt", () => {
     expect(getCached(key)).toBeNull();
   });
 });
+
+describe("putCached validates its own bound", () => {
+  it("rejects a negative keep rather than sweeping nothing", () => {
+    // putCached ran the sweep statement directly, so it skipped the guard that
+    // evictFeature had. LIMIT -1 is "no limit" in SQLite, which means the
+    // subquery returns every key and the DELETE removes none — the bound
+    // silently becoming unbounded, which is the one failure it exists to stop.
+    const key = keyFor("packing", "bad-bound");
+    expect(() => putCached(key, "packing", { x: 1 }, { keep: -1 })).toThrow(
+      RangeError,
+    );
+    expect(() => putCached(key, "packing", { x: 1 }, { keep: 2.5 })).toThrow(
+      RangeError,
+    );
+  });
+});
