@@ -1,7 +1,6 @@
 import { Router } from "express";
 import type { NextFunction, Response } from "express";
 import { requireAuth, type AuthedRequest } from "../auth/tokens.js";
-import { db } from "../db.js";
 import { allDestinations } from "../data/index.js";
 import { cacheKey, getCached, putCached } from "../ai/cache.js";
 import { loadUserKey, type AiRequest } from "../ai/loadUserKey.js";
@@ -50,6 +49,14 @@ export function __resetPackingLimitForTests(): void {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * One message for every way a tripId can be wrong — malformed, someone else's,
+ * or the caller's own but for different dates. An attacker must not be able to
+ * tell "that trip is not yours" from "that is not a trip id" by reading the
+ * response, so the three cases are indistinguishable on the wire.
+ */
+const BAD_TRIP_ID = "tripId must be one of your own trips for these dates";
 const MODES = ["flight", "bike", "bus"] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -109,10 +116,7 @@ type PackingRequestParse =
  * mistake, anything else — echoing it back is how a credential ends up in a
  * screenshot or a log line.
  */
-function parsePackingRequest(
-  body: unknown,
-  userId: number,
-): PackingRequestParse {
+function parsePackingRequest(body: unknown): PackingRequestParse {
   const raw = (body ?? {}) as Record<string, unknown>;
 
   const dest = allDestinations.find((d) => d.id === raw.destinationId);
@@ -155,26 +159,15 @@ function parsePackingRequest(
     return { ok: false, message: `mode must be one of ${MODES.join(", ")}` };
   }
 
-  // The trip is resolved server-side from the tuple, so this field is never the
-  // only thing standing between a caller and someone else's trip. It is still
-  // accepted, and still ownership-checked, because the PRD's request shape
-  // carries it — and a supplied id that is not the caller's, or does not match
-  // the tuple, is a 400 with the same message as a malformed one. No oracle.
+  // Shape only. Ownership *and* the tuple match are one lookup in the handler,
+  // via findOwnedTrip — two separate checks would let a caller pass ownership
+  // and then be silently ignored for naming a trip on other dates.
   const tripId = raw.tripId;
-  if (tripId !== undefined) {
-    if (
-      typeof tripId !== "number" ||
-      !Number.isSafeInteger(tripId) ||
-      tripId < 1
-    ) {
-      return { ok: false, message: "tripId must be a positive integer" };
-    }
-    const owned = db
-      .prepare("SELECT id FROM trips WHERE id = ? AND user_id = ?")
-      .get(tripId, userId);
-    if (!owned) {
-      return { ok: false, message: "tripId must be a positive integer" };
-    }
+  if (
+    tripId !== undefined &&
+    (typeof tripId !== "number" || !Number.isSafeInteger(tripId) || tripId < 1)
+  ) {
+    return { ok: false, message: BAD_TRIP_ID };
   }
 
   return {
@@ -300,7 +293,7 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
   const userId = req.userId as number; // requireAuth guarantees this
   const ai = req.ai as NonNullable<AiRequest["ai"]>; // loadUserKey guarantees this
 
-  const parsed = parsePackingRequest(req.body, userId);
+  const parsed = parsePackingRequest(req.body);
   if (!parsed.ok) {
     sendLocalError(res, 400, "bad_request", parsed.message);
     return;
@@ -312,6 +305,14 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
   // user has not saved is legitimate, and the response simply omits `trip`,
   // which is what tells the client to render the checkboxes disabled.
   const trip = findOwnedTrip({ userId, destinationId: dest.id, start, end, mode, tripId });
+  // Naming a trip and being silently ignored is worse than being refused: the
+  // client asked to tick against that trip and would get a list with no
+  // checkboxes and no reason why. Absent tripId stays permissive — resolving
+  // nothing there just means the user has not saved these dates.
+  if (tripId !== undefined && !trip) {
+    sendLocalError(res, 400, "bad_request", BAD_TRIP_ID);
+    return;
+  }
 
   const key = cacheKey({
     feature: "packing",
