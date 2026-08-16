@@ -595,3 +595,75 @@ describe("the route's own cache-key wiring", () => {
     ).toHaveLength(2);
   });
 });
+
+describe("concurrent identical misses", () => {
+  // Exact completion counts, and the first test in this block caches the very
+  // tuple the second one reuses.
+  beforeEach(() => {
+    db.prepare("DELETE FROM ai_cache WHERE feature = 'packing'").run();
+  });
+
+  it("buys one answer when two users ask at the same moment", async () => {
+    // The cache row is only written after a completion returns, so before
+    // single-flight both of these missed, both called the vendor, and both
+    // paid — for one answer, of which one was immediately overwritten. The
+    // window is the vendor's latency, which is the longest part of a request.
+    const fakes = useFakeProviders({
+      defaultPayload: modelPayload("flight"),
+      // Latency is what makes this a race at all; with an instant fake the
+      // first call would settle before the second was issued and the test
+      // would pass without exercising anything.
+      latencyMs: 40,
+    });
+    const alice = await withKey("inflight-alice@nomad.test");
+    const bob = await withKey("inflight-bob@nomad.test");
+    const tuple = {
+      destinationId: "goa",
+      start: "2026-11-20",
+      end: "2026-11-22",
+      mode: "flight" as const,
+    };
+
+    const [first, second] = await Promise.all([
+      pack(alice, tuple),
+      pack(bob, tuple),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body.packing).toEqual(second.body.packing);
+
+    const completions = (fakes.anthropic as FakeProvider).calls.filter(
+      (c: FakeCall) => c.kind === "complete",
+    );
+    expect(completions, "two users, one paid call").toHaveLength(1);
+  });
+
+  it("still bills both when the two questions differ", async () => {
+    // The guard must key on the question, not merely on concurrency.
+    const fakes = useFakeProviders({
+      defaultPayload: modelPayload("flight"),
+      latencyMs: 40,
+    });
+    const token = await withKey("inflight-distinct@nomad.test");
+    await Promise.all([
+      pack(token, {
+        destinationId: "goa",
+        start: "2026-11-20",
+        end: "2026-11-22",
+        mode: "flight",
+      }),
+      pack(token, {
+        destinationId: "goa",
+        start: "2026-11-27",
+        end: "2026-11-29",
+        mode: "flight",
+      }),
+    ]);
+    expect(
+      (fakes.anthropic as FakeProvider).calls.filter(
+        (c: FakeCall) => c.kind === "complete",
+      ),
+    ).toHaveLength(2);
+  });
+});

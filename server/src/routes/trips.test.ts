@@ -7,6 +7,7 @@ import { syncTripPacking } from "../ai/packingStore.js";
 import { resetProviders } from "../ai/registry.js";
 import { __resetSaveLimitForTests } from "./ai-keys.js";
 import { __resetPackingLimitForTests } from "./ai-packing.js";
+import { __resetTickLimitForTests } from "./trips.js";
 import type { TravelMode } from "../types.js";
 
 const app = createApp();
@@ -149,6 +150,7 @@ afterEach(() => {
   resetProviders();
   __resetSaveLimitForTests();
   __resetPackingLimitForTests();
+  __resetTickLimitForTests();
 });
 
 describe("POST /api/trips", () => {
@@ -680,5 +682,63 @@ describe("GET /api/trips packing counts", () => {
       mode: expect.any(String),
       status: "planned",
     });
+  });
+});
+
+
+describe("the tick endpoint is bounded", () => {
+  it("429s once the hourly budget is spent, with a Retry-After", async () => {
+    // Generous on purpose — a checklist tops out at 48 items and nobody
+    // ticking a real bag approaches 600 an hour. It exists because this was
+    // otherwise the only unbounded write in the feature, on a synchronous
+    // single thread that serves every other request too.
+    const token = await register("tick-limit@nomad.test");
+    const id = await tripFor(token, {
+      destinationId: "goa",
+      start: "2028-01-10",
+      end: "2028-01-13",
+    });
+    const [first] = seedPacking(id, "flight");
+
+    for (let i = 0; i < 600; i += 1) {
+      const res = await check(token, id, {
+        itemKey: first,
+        checked: i % 2 === 0,
+      });
+      expect(res.status).toBe(200);
+    }
+
+    const blocked = await check(token, id, { itemKey: first, checked: true });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe("rate_limited");
+    expect(blocked.headers["retry-after"]).toBeDefined();
+    __resetTickLimitForTests();
+  });
+
+  it("is scoped per account", async () => {
+    const mine = await register("tick-scope-a@nomad.test");
+    const theirs = await register("tick-scope-b@nomad.test");
+    const id = await tripFor(mine, {
+      destinationId: "goa",
+      start: "2028-02-10",
+      end: "2028-02-13",
+    });
+    const theirTrip = await tripFor(theirs, {
+      destinationId: "goa",
+      start: "2028-02-10",
+      end: "2028-02-13",
+    });
+    const [mineKey] = seedPacking(id, "flight");
+    const [theirKey] = seedPacking(theirTrip, "flight");
+
+    for (let i = 0; i < 600; i += 1) {
+      await check(mine, id, { itemKey: mineKey, checked: i % 2 === 0 });
+    }
+    expect((await check(mine, id, { itemKey: mineKey, checked: true })).status).toBe(429);
+    // One account exhausting its budget must not touch another's.
+    expect(
+      (await check(theirs, theirTrip, { itemKey: theirKey, checked: true })).status,
+    ).toBe(200);
+    __resetTickLimitForTests();
   });
 });

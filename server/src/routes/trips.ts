@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import { db } from "../db.js";
 import { requireAuth, type AuthedRequest } from "../auth/tokens.js";
+import { createRateLimiter } from "../ai/rateLimit.js";
 import { allDestinations } from "../data/index.js";
 import {
   readStoredList,
@@ -45,6 +46,26 @@ function parseTripId(raw: string): number | null {
 
 interface TripModeRow {
   mode: TravelMode;
+}
+
+/**
+ * Ticking is cheap — one owner-scoped UPDATE plus a re-read of that trip's
+ * rows — so this budget is deliberately generous. It exists because the
+ * endpoint is otherwise the only unbounded write in the feature, and a
+ * checklist tops out at 48 items: nobody ticking a real bag approaches 600 an
+ * hour, and a script hammering it no longer occupies the single synchronous
+ * thread that serves every other request.
+ */
+const TICK_LIMIT = 600;
+const TICK_WINDOW_MS = 60 * 60 * 1000;
+const tickLimiter = createRateLimiter({
+  limit: TICK_LIMIT,
+  windowMs: TICK_WINDOW_MS,
+});
+
+/** Test-only: the limiter is module state shared by every test in a file. */
+export function __resetTickLimitForTests(): void {
+  tickLimiter.reset();
 }
 
 export const tripsRouter = Router();
@@ -180,6 +201,15 @@ tripsRouter.get("/api/trips/:id/packing", (req: AuthedRequest, res) => {
 });
 
 tripsRouter.post("/api/trips/:id/packing/check", (req: AuthedRequest, res) => {
+  const decision = tickLimiter.check(`tick:${req.userId as number}`);
+  if (!decision.allowed) {
+    res.set("Retry-After", String(decision.retryAfter));
+    res.status(429).json({
+      error: `too many changes — try again in ${decision.retryAfter}s`,
+      code: "rate_limited",
+    });
+    return;
+  }
   const tripId = parseTripId(req.params.id);
   const body = (req.body ?? {}) as Record<string, unknown>;
   const { itemKey, checked } = body;

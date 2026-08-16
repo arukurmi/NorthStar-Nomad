@@ -4,6 +4,7 @@ import { requireAuth, type AuthedRequest } from "../auth/tokens.js";
 import { allDestinations } from "../data/index.js";
 import { cacheKey, getCached, putCached } from "../ai/cache.js";
 import { loadUserKey, type AiRequest } from "../ai/loadUserKey.js";
+import { inFlight } from "../ai/inflight.js";
 import { findOwnedTrip, syncTripPacking } from "../ai/packingStore.js";
 import {
   makePackingParser,
@@ -379,17 +380,26 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
   try {
     // `req.ai` reaches `complete()` and nothing else — not a log line, not the
     // cached payload, not the response.
-    const result = await ai.provider.complete({
-      apiKey: ai.apiKey,
-      model: ai.model,
-      system: packingSystemPrompt(),
-      user: packingUserPrompt(buildGrounding(dest, start, end, mode)),
-      schema: PACKING_SCHEMA,
-      schemaName: PACKING_SCHEMA_NAME,
-      parse: makePackingParser(mode),
-      maxTokens: 3000,
-      temperature: 0.4,
-    });
+    // Keyed on the cache key, which already carries everything that changes
+    // the answer including the provider and model — so two users who ask the
+    // same question inside the vendor's latency window share one paid call
+    // instead of buying the same answer twice. The apiKey is deliberately NOT
+    // part of the key: the answer does not depend on whose credential bought
+    // it, and including it would defeat the whole point while putting a
+    // credential in a map key.
+    const result = await inFlight(key, () =>
+      ai.provider.complete({
+        apiKey: ai.apiKey,
+        model: ai.model,
+        system: packingSystemPrompt(),
+        user: packingUserPrompt(buildGrounding(dest, start, end, mode)),
+        schema: PACKING_SCHEMA,
+        schemaName: PACKING_SCHEMA_NAME,
+        parse: makePackingParser(mode),
+        maxTokens: 3000,
+        temperature: 0.4,
+      }),
+    );
 
     // Persisting is deliberately *after* the answer exists and deliberately not
     // allowed to lose it. The completion is already paid for; failing the

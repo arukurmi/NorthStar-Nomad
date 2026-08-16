@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { AiClientError, createAiClient } from "../lib/ai";
 import type {
@@ -37,6 +37,8 @@ export type PackState =
 export interface UsePacking {
   state: PackState;
   generate: () => void;
+  /** True while the free rehydrate from stored state is running. */
+  restoring: boolean;
   /** Flips one item. No-op unless the state is `ready` with a saved trip. */
   toggle: (itemKey: string, checked: boolean) => void;
   /** Item keys with a tick in flight, so a row can disable itself. */
@@ -56,6 +58,7 @@ export function usePacking(request: PackingRequest): UsePacking {
   const [state, setState] = useState<PackState>({ status: "idle" });
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [tickError, setTickError] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
   // A ref, not state: this must be readable synchronously inside `toggle` to
   // reject a second click that arrives before React has re-rendered. Reading
   // `pending` there would see the value from the render that scheduled it.
@@ -190,5 +193,57 @@ export function usePacking(request: PackingRequest): UsePacking {
     [client, state],
   );
 
-  return { state, generate, toggle, pending, tickError };
+  /**
+   * Free rehydrate. `GET /api/trips/:id/packing` reads the stored snapshot: no
+   * AI key, no provider call, no cache lookup, and no charge — so a reload
+   * shows the user the list they already have instead of an idle panel that
+   * invites them to buy it again.
+   *
+   * It only runs when the caller knows a trip id, which is exactly when a
+   * snapshot can exist. Silence on failure is deliberate: this is an
+   * opportunistic restore, and the idle state it falls back to is a correct,
+   * usable screen rather than an error.
+   */
+  useEffect(() => {
+    if (tripId === undefined) return;
+    let cancelled = false;
+    setRestoring(true);
+    client
+      .readTripPacking(tripId)
+      .then((res) => {
+        if (cancelled || res.total === 0) return;
+        setState({
+          status: "ready",
+          packing: {
+            summary: "Saved with this trip.",
+            categories: res.categories.map((category) => ({
+              name: category.name,
+              modeCategory: category.modeCategory,
+              items: category.items.map(({ checked: _checked, ...item }) => item),
+            })),
+          },
+          cached: true,
+          generatedAt: new Date().toISOString(),
+          trip: {
+            id: tripId,
+            checked: Object.fromEntries(
+              res.categories.flatMap((category) =>
+                category.items.map((item) => [item.itemKey, item.checked]),
+              ),
+            ),
+            checkedCount: res.checkedCount,
+            total: res.total,
+          },
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, tripId]);
+
+  return { state, generate, toggle, pending, tickError, restoring };
 }
