@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { fetchDestination } from "../../lib/api";
 import type { Destination, TravelMode } from "../../lib/types";
 import { useAuth } from "../../lib/auth";
+import { DestinationTabs, type DestinationTab } from "./DestinationTabs";
+import { PackPanel } from "../Packing/PackPanel";
 
 const MONTH_INITIALS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
 
@@ -35,6 +37,7 @@ export function DestinationDetail({
   const [planState, setPlanState] = useState<
     "idle" | "saving" | "saved" | "declined" | "duplicate"
   >("idle");
+  const [tab, setTab] = useState<DestinationTab>("overview");
 
   const planTrip = async () => {
     setPlanState("saving");
@@ -60,6 +63,11 @@ export function DestinationDetail({
     let cancelled = false;
     setDest(null);
     setError(null);
+    // A new destination is a new subject: keep the drawer on Overview rather
+    // than dropping someone into a Pack tab for a place they have not read
+    // about yet — and, more practically, PackPanel unmounts, so its idle state
+    // is restored and no stale list from the previous destination can show.
+    setTab("overview");
     fetchDestination(id)
       .then((d) => {
         if (!cancelled) setDest(d);
@@ -101,6 +109,21 @@ export function DestinationDetail({
         </p>
       </div>
 
+      <div className="mt-4">
+        <DestinationTabs value={tab} onChange={setTab} />
+      </div>
+
+      {tab === "pack" ? (
+        <div className="mt-6">
+          <PackPanel
+            destinationId={id}
+            destinationName={dest.name}
+            range={range}
+            mode={mode}
+          />
+        </div>
+      ) : (
+        <>
       <p className="mt-3 text-starlight/85">{dest.blurb}</p>
       <p className="mt-2 text-sm text-muted">
         Best for: {dest.bestFor} · Ideal trip: {dest.idealDays}+ day
@@ -204,6 +227,8 @@ export function DestinationDetail({
           </span>
         ))}
       </div>
+        </>
+      )}
     </div>
   );
 }
