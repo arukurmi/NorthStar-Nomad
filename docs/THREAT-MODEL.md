@@ -1,7 +1,9 @@
 # Threat model — the BYOK key vault
 
 Scope: feature **F0**, the storage and use of user-supplied AI provider API
-keys (`server/src/ai/*`, `server/src/routes/ai-keys.ts`, the profile UI).
+keys (`server/src/ai/*`, `server/src/routes/ai-keys.ts`, the profile UI), and
+**F2**, the first feature to spend one of those keys and the first to write to
+the shared `ai_cache` (§5, §5A).
 Written against the code as it stands, not against the design intent — every
 claim below names the file or the test that holds it up.
 
@@ -127,43 +129,151 @@ client call site, and neither belongs in F0. The 30-day TTL is a
 convenience choice for a product with no users; it should shrink before it has
 any.
 
-## 5. `ai_cache` — the question F1 must settle before it writes a single row
+## 5. `ai_cache` — settled by F2, the first feature to write to it
 
-`cacheKey()` hashes `{ feature, destinationId, start, end, mode, model, options }`.
-There is no `userId` in it — deliberately, and asserted by a test — and there is
-no `provider` in it either. `ai_cache` has no `user_id` column, so the cache is
-**global**: the first user to ask a given question pays for the answer, and every
-later user with a matching tuple is served that stored answer verbatim.
+`cacheKey()` hashes `{ feature, destinationId, start, end, mode, model, provider,
+options }`. There is no `userId` in it — deliberately, and asserted by a test —
+and `ai_cache` has no `user_id` column, so the cache is **global**: the first
+user to ask a given question pays for the answer, and every later user with a
+matching tuple is served that stored answer verbatim.
 
-That is the intended economics. It is also a trust boundary, and F0 has not
-crossed it: **`cache.ts` has zero callers today.** F1 is the first thing that
-will write to that table, and these are the questions it has to answer first.
+That is the intended economics, and it is also a trust boundary. F0 wrote the
+table and never crossed it. **F2 is the first writer**, and it answered the five
+questions this section used to pose. What follows is the answer, not the
+question.
 
-1. **Can any user-controlled free text reach the cached payload?** If a prompt
-   ever includes text the asker typed, the cache turns into a distribution
-   channel: one crafted request, one poisoned row, served to everyone who asks
-   the same question afterwards, with our UI's trust attached to it. If prompt
-   inputs are restricted to our own catalogue (a destination id, dates, a mode),
-   the blast radius is a wrong answer rather than an attacker-authored one.
-   **Recommended default: cache only when every prompt input comes from our
-   catalogue.**
-2. **Should `provider` join the key?** As written, two vendors that share a model
-   id string collide, and one user's Anthropic answer can be served to a user who
-   configured OpenAI. `model` is in the key, so today the collision is mostly
-   *between users on the same model*, and it is close to harmless — model ids
-   happen to be vendor-unique in practice. It stops being harmless the moment an
-   adapter with arbitrary model names exists (a local model, an
-   OpenAI-compatible gateway), because then a user picks the model *string*.
-   Adding `provider` costs one line and removes the question.
-3. **Is a cached answer distinguishable from a fresh one, to the user?**
-   `usage.ts` already splits `cachedCalls` from billed calls, so the accounting
-   is honest. The UI should be too, if the answer might be days old.
-4. **What is the TTL?** `getCached` accepts `maxAgeMs` but each caller chooses,
-   and the default is "forever". F1 should pick a bound per feature rather than
-   leaving that to whoever writes the fourth feature.
-5. **There is no integrity check on a payload.** Whoever triggers a miss writes
-   the row that everyone else reads. That is inherent to a global cache; it is
-   only acceptable while (1) holds.
+### 5.1 Can user-controlled free text reach a cached payload? No, structurally.
+
+Not "no, by convention". Three independent mechanisms, any one of which would
+have to be dismantled deliberately:
+
+1. `POST /api/ai/packing` reads exactly four scalars from the body —
+   `destinationId`, `start`, `end`, `mode` — plus an optional `tripId` and
+   `provider`, neither of which reaches a prompt. `destinationId` must resolve
+   against `allDestinations`, our own catalogue. `mode` is an enum. The dates
+   must match `YYYY-MM-DD`, survive an ISO round-trip, sit within a planning
+   horizon and span at most 30 days. **There is no free-text field.**
+2. `packingUserPrompt` takes a `PackingGrounding`, built from a `Destination`
+   row. That type has no index signature, so a property smuggled onto a request
+   body has no path into a prompt string that is not a compile error.
+3. `parsePackingList` projects field by field into a freshly constructed object
+   and returns nothing by reference. Anything the model emits outside the
+   declared shape is dropped before `putCached` sees it.
+
+Two canary tests hold this up: a POST carrying marker strings in extra body
+fields must produce a prompt containing neither, and a stored payload containing
+neither.
+
+**The rule this establishes for F1, F3 and F4:** a feature may write to
+`ai_cache` only while every prompt input comes from our catalogue. The first
+feature that wants free-text steering — "make it lighter", "we have a toddler" —
+must not cache, or must cache per user, and that is a design change rather than
+a patch.
+
+### 5.2 Is `provider` in the key? Yes, and required.
+
+It was added by F2. Without it two vendors sharing a model id string collide,
+and one user's Anthropic answer is served to a user who configured OpenAI.
+Today that would be near-harmless because model ids happen to be vendor-unique;
+it stops being harmless the moment an adapter with caller-chosen model names
+exists — a local model, an OpenAI-compatible gateway — because then the user
+picks the model *string*.
+
+It is a **required** field rather than an optional one. Optional would have kept
+every existing digest byte-identical, but it would also have left "pass a
+provider" as something four separate route files each have to remember, with
+nothing but review behind it. Every `AiFeature` is a model call, so every caller
+has a provider.
+
+Model ids cannot forge a boundary: `canonical()` runs every value through
+`JSON.stringify`, so no amount of punctuation in a model string fakes a
+delimiter. Asserted by a test.
+
+### 5.3 Is a cached answer distinguishable from a fresh one? Yes.
+
+The response carries `cached: boolean` and `generatedAt`, and the UI renders
+"Generated 3 days ago · free, from cache" or "Generated just now · billed to
+your provider". `usage.ts` already split `cachedCalls` from billed calls, so the
+accounting was honest; now the surface is too.
+
+`generatedAt` is normalised to ISO-8601 with a zone marker inside `getCached`,
+because `datetime('now')` writes UTC with no marker and a browser reads that as
+local time — a list generated a minute ago would otherwise read as hours old for
+most of the world.
+
+### 5.4 What is the TTL, and what bounds the table?
+
+Per feature, declared beside the prompt it belongs to, because staleness is a
+property of a particular prompt's answers rather than of the cache mechanism.
+Packing chose **30 days**.
+
+A packing list is a function of static repository data — the destination row, its
+month climatology, the trip length, the mode — so it does not decay because the
+world moved. Expiry exists only so a catalogue correction reaches users and so
+one bad generation is not permanent, both of which operate on a scale of weeks.
+The binding argument runs the other way: a cache hit is free, so a longer window
+is strictly pro-user, and anything under a month re-bills the ordinary user who
+reopens the tab as their date approaches.
+
+A prompt change is **not** handled by the TTL. `PACKING_PROMPT_VERSION` travels
+in `options.pv`, so bumping it invalidates every row instantly and deliberately.
+
+Space is bounded by a per-feature sweep inside `putCached`'s transaction, keeping
+the 2000 most recently written rows for that feature. Least-recently-*written*,
+not least-recently-used: true LRU needs a `last_read_at` column, which means an
+`ALTER TABLE` in a repo with no migration runner and turns every cache read into
+a write.
+
+### 5.5 There is still no integrity check on a payload — and one mitigation
+
+Whoever triggers a miss writes the row everyone else reads. That is inherent to a
+global cache, and it is only acceptable while §5.1 holds.
+
+F2 adds one thing F0 did not have: **the cache-hit path re-runs the validator**
+rather than trusting the stored row. A payload written under a prompt version
+this build no longer understands, or edited straight into the SQLite file, is
+treated as a miss and regenerated rather than being served with our UI's trust —
+checkboxes, item keys and all — attached to it. It does not make the row
+trustworthy; it bounds what an untrustworthy row can be.
+
+### 5.6 What F2 did *not* close: the eviction budget is shared
+
+The 2000-row bound is **per feature, not per user**. One authenticated user
+issuing 2000 distinct requests evicts everyone else's packing rows and makes
+them pay again on their next visit.
+
+It costs the attacker 2000 completions billed to their own key, and the route's
+30/hour per-account limiter bounds the rate — but registration is not throttled,
+so N accounts give 30N/hour. Fixing it properly needs a per-caller partition,
+which needs a column, which needs a migration runner this repo does not have.
+
+**Accepted, and named here rather than left to be rediscovered in F3.**
+
+---
+
+## 5A. `trip_packing` — per-user state beside a shared cache
+
+F2 introduces the first table that holds per-user state derived from an AI
+answer, which makes "the cache is global" and "ticks are private" adjacent
+claims that must not blur.
+
+- **`trip_packing` has no `user_id` column.** `trips.user_id` is the one owner; a
+  copy would be a second source of truth that can disagree. Every write resolves
+  ownership through `trips` in the same statement, so a non-owner's write changes
+  zero rows and the route answers **404** — the same shape as the rest of
+  `trips.ts`, and never a 403, so there is no existence oracle.
+- **Tick state cannot reach `ai_cache`.** `PackingList` has no `checked` field at
+  all, and the tick state is assembled *after* `putCached`. Asserted by a test
+  that reads the stored payloads directly.
+- **`syncTripPacking` re-checks ownership inside its own transaction.** The route
+  resolves the trip and then awaits a vendor call; better-sqlite3 is synchronous,
+  so that await is the only yield point in the request. A trip deleted in that
+  window would otherwise have rows re-inserted for it after its cascade had run,
+  leaving unreachable storage forever. Not a cross-user leak — `trips.id` is
+  `AUTOINCREMENT`, so ids are never reused — but a broken invariant.
+- **Deleting a trip removes its checklist**, explicitly and transactionally.
+  `PRAGMA foreign_keys` is off, matching the existing bare `REFERENCES`, so the
+  cascade is application code and is tested as such.
 
 ## 6. The throttle that exists, and what it does not cover
 
@@ -214,7 +324,10 @@ oversight.
 | 1 | Host or process compromise exposes every key in plaintext | Accepted — inherent to a single-service architecture with no KMS |
 | 2 | Rotating `NOMAD_MASTER_KEY` destroys every stored key; no `rotate()` | Accepted for F0 — §3 names the implementation and the operating rule |
 | 3 | XSS yields 30 days of account access; sessions cannot be revoked | Accepted for F0 — attacker cannot read plaintext keys; can delete them and burn credit |
-| 4 | Global `ai_cache` serves one user's answer to another | Not yet realised — zero callers; F1 must settle §5 before writing |
+| 4 | Global `ai_cache` serves one user's answer to another | **Bounded** — settled by F2 in §5. Prompt inputs are catalogue-only and structurally enforced, `provider` is in the key, hits are re-validated, TTL is 30 days |
+| 4a | One user's requests can evict every other user's cached rows | Accepted — §5.6. Costs the attacker 2000 paid completions; rate-bounded per account but registration is unthrottled |
+| 9 | A feature route can burn a victim's provider credit through F2 | Bounded — 30 generations/hour/account, checked before the key is decrypted. Not a spend cap |
+| 10 | `NOMAD_AI_FAKE` on a deployed host would serve fabricated answers from the shared cache | Closed — the process refuses to boot, same rule as the master key |
 | 5 | Key-save throttle is per-account and per-process only | Accepted — raises cost, does not eliminate the oracle |
 | 6 | Deleting a key here does not revoke it upstream | Accepted; UI copy gap is an open action (§7) |
 | 7 | Non-production data is encrypted under a public key | Accepted by design; deployed hosts refuse it |
