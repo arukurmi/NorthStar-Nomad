@@ -95,6 +95,7 @@ export function AiErrorNote({
       <div className="mt-4 flex flex-wrap items-center gap-3">
         {retryable && onRetry && (
           <button
+            type="button"
             onClick={onRetry}
             className="rounded-full bg-raise px-4 py-1.5 text-sm font-medium text-starlight transition hover:brightness-125"
           >

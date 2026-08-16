@@ -8,10 +8,10 @@ interface PackingProgressProps {
 /**
  * "11 / 24 packed", with a gradient bar.
  *
- * The gradient is inline and CSS-only, exactly like `Destination.heroGradient`
- * — this app ships no image assets, and a progress bar is not the place to
- * start. It runs marigold to jade so "done" reads as arrival rather than as
- * more of the same colour.
+ * CSS-only, no image asset, like everything else in this app. It runs marigold
+ * to jade so finishing reads as arrival rather than as more of the same colour
+ * — and it uses the Tailwind tokens rather than their hex values, which are
+ * byte-identical today and are exactly the sort of thing that drifts later.
  */
 export function PackingProgress({
   checked,
@@ -23,7 +23,14 @@ export function PackingProgress({
 
   return (
     <div>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <div
+        className={`flex flex-wrap items-baseline justify-between gap-2 ${
+          // "0 / 0 packed" above "save this trip to tick items off" is a zero
+          // that is not a measurement. The bar stays as context; the number
+          // goes until there is something to count.
+          tickable ? "" : "hidden"
+        }`}
+      >
         <p className="font-numeric text-sm">
           <span
             className={complete ? "font-bold text-jade" : "font-bold text-marigold"}
@@ -47,10 +54,9 @@ export function PackingProgress({
         className="mt-2 h-2 w-full overflow-hidden rounded-full bg-raise"
       >
         <div
-          className="h-full rounded-full transition-all duration-500 ease-out"
+          className="h-full rounded-full bg-gradient-to-r from-marigold to-jade transition-all duration-500 ease-out"
           style={{
             width: `${pct}%`,
-            background: "linear-gradient(90deg, #FFB648 0%, #38D1A5 100%)",
             // A zero-width bar with a border radius still paints a dot on some
             // engines, which reads as "one thing done" when nothing is.
             opacity: pct === 0 ? 0 : 1,

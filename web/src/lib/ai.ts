@@ -80,9 +80,13 @@ function toAiError(err: unknown): AiClientError {
       },
     );
   }
+  // A fixed string, never the throwable's own message. A dropped connection
+  // yields "Failed to fetch", which renders under "Couldn't reach your
+  // provider" as noise the user cannot act on — and an arbitrary throwable can
+  // carry the request that produced it.
   return new AiClientError(
     "provider_error",
-    err instanceof Error ? err.message : "the request could not be completed",
+    "the request could not be completed",
   );
 }
 
