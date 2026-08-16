@@ -91,9 +91,33 @@ tripsRouter.post("/api/trips", (req: AuthedRequest, res) => {
   res.status(201).json({ trip });
 });
 
+/**
+ * The two packing counts ride along on the list rather than being fetched per
+ * row. The profile page renders a collapsed progress card for every trip, and
+ * the alternative is one GET /api/trips/:id/packing per row on mount — an N+1
+ * for a progress bar. The full checklist is still fetched lazily, only when a
+ * card is actually expanded.
+ *
+ * `t.*` returns exactly the columns `SELECT *` returned before, so nothing new
+ * is exposed; the aggregate is additive and reads 0/0 for a trip with no list.
+ */
 tripsRouter.get("/api/trips", (req: AuthedRequest, res) => {
   const trips = db
-    .prepare("SELECT * FROM trips WHERE user_id = ? ORDER BY start DESC")
+    .prepare(
+      `SELECT t.*,
+              COALESCE(p.total, 0)   AS packing_total,
+              COALESCE(p.checked, 0) AS packing_checked
+         FROM trips t
+         LEFT JOIN (
+               SELECT trip_id,
+                      COUNT(*)      AS total,
+                      SUM(checked)  AS checked
+                 FROM trip_packing
+                GROUP BY trip_id
+              ) p ON p.trip_id = t.id
+        WHERE t.user_id = ?
+        ORDER BY t.start DESC`,
+    )
     .all(req.userId);
   res.json({ trips });
 });
