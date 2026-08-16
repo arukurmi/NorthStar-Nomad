@@ -215,11 +215,24 @@ function logRouteFault(stage: string, destinationId: string, err: unknown): void
  */
 function tripStateFor(
   trip: { id: number } | null,
+  userId: number,
   list: PackingList,
+  destinationId: string,
 ): { trip?: { id: number; checked: Record<string, boolean>; checkedCount: number; total: number } } {
   if (!trip) return {};
-  const state = syncTripPacking(trip.id, list);
-  return { trip: { id: trip.id, ...state } };
+  try {
+    const state = syncTripPacking(trip.id, userId, list);
+    // null means the trip vanished during the vendor call. Same shape as "no
+    // trip saved", which the client already renders as disabled checkboxes.
+    return state ? { trip: { id: trip.id, ...state } } : {};
+  } catch (err) {
+    // A storage fault here must not cost the user the answer they have already
+    // paid for. Degrading to "no trip" keeps the list, and because the sync
+    // also runs on the cache-hit path, the checkboxes reappear on the next
+    // request for free rather than needing a second completion.
+    logRouteFault("sync", destinationId, err);
+    return {};
+  }
 }
 
 export const aiPackingRouter = Router();
@@ -357,7 +370,7 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
         cached: true,
         generatedAt,
         packing: list,
-        ...tripStateFor(trip, list),
+        ...tripStateFor(trip, userId, list, dest.id),
       });
       return;
     }
@@ -401,7 +414,7 @@ async function handlePacking(req: AiRequest, res: Response): Promise<void> {
       cached: false,
       generatedAt: new Date().toISOString(),
       packing: result.data,
-      ...tripStateFor(trip, result.data),
+      ...tripStateFor(trip, userId, result.data, dest.id),
     });
   } catch (err) {
     // The single place an AI route writes an error response: it maps the code to
