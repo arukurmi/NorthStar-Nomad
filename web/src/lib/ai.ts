@@ -3,8 +3,10 @@ import type {
   AiErrorCode,
   AiKeyPublic,
   KeysResponse,
+  PackingCheckResponse,
   PackingRequest,
   PackingResponse,
+  TripPackingResponse,
   ProviderId,
   SaveKeyResponse,
   UsageResponse,
@@ -102,6 +104,12 @@ export interface AiClient {
   setPreferred(provider: ProviderId): Promise<AiKeyPublic[]>;
   usage(): Promise<UsageResponse>;
   generatePacking(input: PackingRequest): Promise<PackingResponse>;
+  readTripPacking(tripId: number): Promise<TripPackingResponse>;
+  setPackingItem(
+    tripId: number,
+    itemKey: string,
+    checked: boolean,
+  ): Promise<PackingCheckResponse>;
 }
 
 /**
@@ -186,6 +194,30 @@ export function createAiClient(authFetch: AuthState["authFetch"]): AiClient {
           "/api/ai/packing",
           { method: "POST", body: JSON.stringify(input) },
           { signOutOn401: false },
+        );
+      } catch (err) {
+        throw toAiError(err);
+      }
+    },
+
+    async readTripPacking(tripId) {
+      try {
+        // Deliberately needs no key and makes no provider call: this is how a
+        // list survives a reload, and how it keeps working after the cache row
+        // has expired or the user has removed their AI key entirely.
+        return await authFetch<TripPackingResponse>(
+          `/api/trips/${tripId}/packing`,
+        );
+      } catch (err) {
+        throw toAiError(err);
+      }
+    },
+
+    async setPackingItem(tripId, itemKey, checked) {
+      try {
+        return await authFetch<PackingCheckResponse>(
+          `/api/trips/${tripId}/packing/check`,
+          { method: "POST", body: JSON.stringify({ itemKey, checked }) },
         );
       } catch (err) {
         throw toAiError(err);
