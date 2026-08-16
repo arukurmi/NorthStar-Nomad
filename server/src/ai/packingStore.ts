@@ -246,6 +246,18 @@ interface TickRow {
   checked: number;
 }
 
+/**
+ * Owner-scoped variants. `trip_id = (SELECT id FROM trips WHERE id = ? AND
+ * user_id = ?)` yields NULL for a non-owner, and `trip_id = NULL` matches
+ * nothing — so a wrong user reads an empty list rather than somebody else's.
+ */
+const selectTicksOwned = db.prepare(`
+  SELECT item_key AS itemKey, checked
+  FROM trip_packing
+  WHERE trip_id = ${OWNED_TRIP}
+  ORDER BY sort_order
+`);
+
 const selectTicks = db.prepare(`
   SELECT item_key AS itemKey, checked
   FROM trip_packing
@@ -255,8 +267,18 @@ const selectTicks = db.prepare(`
 
 /** One query. Counts are derived from the rows themselves, so `total` cannot
  *  disagree with the keys in `checked`. */
-export function readTickState(tripId: number): PackingTickState {
-  const rows = selectTicks.all(tripId) as TickRow[];
+/**
+ * Scoped by owner, not merely by trip. Both callers already resolve ownership
+ * before getting here, but "the caller checks first" was the one place in this
+ * module where the invariant lived in a calling convention rather than in the
+ * statement — and a convention is what the third caller forgets.
+ */
+export function readTickState(tripId: number, userId?: number): PackingTickState {
+  const rows = (
+    userId === undefined
+      ? selectTicks.all(tripId)
+      : selectTicksOwned.all(tripId, userId)
+  ) as TickRow[];
   const checked: Record<string, boolean> = {};
   let checkedCount = 0;
   for (const row of rows) {
@@ -276,6 +298,13 @@ interface StoredRow {
   checked: number;
 }
 
+const selectStoredOwned = db.prepare(`
+  SELECT item_key AS itemKey, category, label, qty, reason, checked
+  FROM trip_packing
+  WHERE trip_id = ${OWNED_TRIP}
+  ORDER BY sort_order
+`);
+
 const selectStored = db.prepare(`
   SELECT item_key AS itemKey, category, label, qty, reason, checked
   FROM trip_packing
@@ -294,15 +323,22 @@ const selectStored = db.prepare(`
  * is the model's intended order; `parsePackingList` rejects duplicate category
  * names, so grouping cannot silently merge two sections into one.
  */
+/** Owner-scoped for the same reason `readTickState` is. */
 export function readStoredList(
   tripId: number,
   mode: TravelMode,
+  userId?: number,
 ): StoredPackingCategory[] {
   const modeTitle = MODE_CATEGORY_TITLE[mode];
   const categories: StoredPackingCategory[] = [];
   const byName = new Map<string, StoredPackingCategory>();
 
-  for (const row of selectStored.all(tripId) as StoredRow[]) {
+  const stored = (
+    userId === undefined
+      ? selectStored.all(tripId)
+      : selectStoredOwned.all(tripId, userId)
+  ) as StoredRow[];
+  for (const row of stored) {
     let category = byName.get(row.category);
     if (!category) {
       category = {

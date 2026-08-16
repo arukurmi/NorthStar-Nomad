@@ -154,6 +154,7 @@ tripsRouter.get("/api/trips/check-in", (req: AuthedRequest, res) => {
  * `GET /api/trips/:id` later cannot quietly swallow this route.
  */
 tripsRouter.get("/api/trips/:id/packing", (req: AuthedRequest, res) => {
+  const userId = req.userId as number; // requireAuth guarantees this
   const tripId = parseTripId(req.params.id);
   if (tripId === null) {
     sendPackingError(res, 404, "not_found", "no such trip");
@@ -163,16 +164,16 @@ tripsRouter.get("/api/trips/:id/packing", (req: AuthedRequest, res) => {
   // miss. `mode` is what `readStoredList` needs to flag the mode category.
   const trip = db
     .prepare("SELECT mode FROM trips WHERE id = ? AND user_id = ?")
-    .get(tripId, req.userId) as TripModeRow | undefined;
+    .get(tripId, userId) as TripModeRow | undefined;
   if (!trip) {
     sendPackingError(res, 404, "not_found", "no such trip");
     return;
   }
   // An owned trip with nothing generated yet answers `[]` and zero counts. An
   // empty list is a correct answer here, not an error.
-  const { checkedCount, total } = readTickState(tripId);
+  const { checkedCount, total } = readTickState(tripId, userId);
   res.json({
-    categories: readStoredList(tripId, trip.mode),
+    categories: readStoredList(tripId, trip.mode, userId),
     checkedCount,
     total,
   });
