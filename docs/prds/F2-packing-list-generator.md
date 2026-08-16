@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| **Status** | Awaiting approval |
+| **Status** | Delivered — `feat/f2-packing-list` |
 | **Branch** | `feat/f2-packing-list` |
 | **Depends on** | F0 |
 | **Size** | Small |
@@ -119,13 +119,51 @@ on the trip row in the profile page:
 
 ## Micro-task breakdown
 
-1. Packing JSON schema + types
-2. `prompts/packing.ts` + snapshot test
-3. `POST /api/ai/packing` + tests
-4. `trip_packing` table + tick endpoint + tests
-5. Cache integration
-6. `web` client methods
-7. Category / checklist components
-8. Pack tab wiring + progress indicator
-9. Profile trip-row packing card
-10. Mobile pass + docs
+1. ✅ Packing JSON schema + types — phase 01
+2. ✅ `prompts/packing.ts` + snapshot test — phase 01, as committed `.txt`
+   fixtures compared with `toBe` rather than `toMatchSnapshot()`. A `vitest -u`
+   silently blessing a prompt regression is the one failure a prompt test must
+   not have.
+3. ✅ `POST /api/ai/packing` + tests — phase 02
+4. ✅ `trip_packing` table + tick endpoint + tests — DDL in phase 01, endpoints
+   in phase 03. Split because `db.ts` is a single `db.exec()` block and the
+   endpoints need the store, which needs the parser.
+5. ✅ Cache integration — **merged into task 3**, not shipped separately. A route
+   that called a provider without consulting the cache would bill users for the
+   duration of one PR, which violates cluster principle 5. Caching is not a
+   follow-up to the route; it is the route.
+6. ✅ `web` client methods — phase 04
+7. ✅ Category / checklist components — phase 04
+8. ✅ Pack tab wiring + progress indicator — phase 04
+9. ✅ Profile trip-row packing card — phase 05
+10. ✅ Mobile pass + docs — phase 05
+
+Two additions the PRD did not list, both forced by the cluster's own rules:
+
+- **The `ai_cache` decisions.** `docs/THREAT-MODEL.md` §5 required the first
+  feature to write to that table to settle provider namespacing and the missing
+  TTL. F2 is that feature. Both are recorded in the LLD §2 and the threat model.
+- **A per-account throttle on the route.** The threat model accepted "spend the
+  victim's provider credit through our features" as an F0 risk explicitly
+  *because F1–F4 did not exist yet*. This route makes it real, so the acceptance
+  lapsed with it.
+
+## What shipped against the success criteria
+
+- *A bike list and a flight list differ in more than labels* — enforced at the
+  prompt, where `MODE_BRIEF` injects each mode's physics rather than a list of
+  items, and asserted by a test that strips every mode word from both prompts
+  and requires the remainders to still differ.
+- *Tick state survives reload and is scoped to the user* — `trip_packing` holds
+  the whole checklist, so `GET /api/trips/:id/packing` rehydrates it with no AI
+  key, no provider call and no cache lookup, long after the cached row expires.
+- *A cold-destination list contains thermals; a monsoon list contains rain
+  protection* — grounded on `tempMin`/`tempMax` and the summary line for **every**
+  month the trip touches, not the start month alone.
+
+## Not delivered, and why
+
+- **No web test runner.** This repo has none and F2 did not add one, so the
+  frontend rests on `tsc --noEmit`, `vite build`, code review and a manual
+  checklist. The rendered output and the 375px layout were reasoned about, not
+  observed.
