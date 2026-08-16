@@ -164,3 +164,89 @@ describe("trip state on the packing response", () => {
     );
   });
 });
+
+describe("syncing on the cache-hit path", () => {
+  it("syncs a trip saved after the list was generated, without paying twice", async () => {
+    // The case that would otherwise be missed entirely. A user generates a
+    // list, likes it, and only then saves the trip. If the sync ran on the
+    // miss path alone, their checkboxes would never appear — and the only way
+    // to make them appear would be to bust the cache and buy the same answer
+    // a second time.
+    const fakes = useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const token = await withKey("trip-late-save@nomad.test");
+
+    const first = await pack(token, SPITI);
+    expect(first.body.cached).toBe(false);
+    expect("trip" in first.body).toBe(false);
+
+    const tripId = await saveTrip(token, SPITI);
+
+    const second = await pack(token, SPITI);
+    expect(second.status).toBe(200);
+    expect(second.body.cached, "the answer should still be free").toBe(true);
+    expect(second.body.trip.id).toBe(tripId);
+    expect(second.body.trip.total).toBe(ITEM_COUNT);
+    expect(rowsFor(tripId)).toHaveLength(ITEM_COUNT);
+    expect(completions(fakes.anthropic as FakeProvider)).toBe(1);
+  });
+
+  it("keeps ticks when a cache hit re-syncs the same list", async () => {
+    const fakes = useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const token = await withKey("trip-hit-ticks@nomad.test");
+    const tripId = await saveTrip(token, SPITI);
+
+    const first = await pack(token, SPITI);
+    const [firstKey] = Object.keys(first.body.trip.checked);
+    const ticked = await request(app)
+      .post(`/api/trips/${tripId}/packing/check`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ itemKey: firstKey, checked: true });
+    expect(ticked.status).toBe(200);
+
+    const second = await pack(token, SPITI);
+    expect(second.body.cached).toBe(true);
+    expect(second.body.trip.checked[firstKey]).toBe(true);
+    expect(second.body.trip.checkedCount).toBe(1);
+    expect(completions(fakes.anthropic as FakeProvider)).toBe(1);
+  });
+});
+
+describe("regeneration", () => {
+  it("preserves ticks on surviving items and prunes the rest", async () => {
+    const token = await withKey("trip-regen@nomad.test");
+    const tripId = await saveTrip(token, SPITI);
+
+    useFakeProviders({ defaultPayload: modelPayload("bike") });
+    const first = await pack(token, SPITI);
+    const keys = Object.keys(first.body.trip.checked);
+    // Tick one item that survives the regeneration and one that does not.
+    const survivor = first.body.packing.categories[0].items[0].itemKey;
+    const doomed = first.body.packing.categories[3].items[2].itemKey;
+    for (const itemKey of [survivor, doomed]) {
+      const res = await request(app)
+        .post(`/api/trips/${tripId}/packing/check`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ itemKey, checked: true });
+      expect(res.status).toBe(200);
+    }
+    expect(rowsFor(tripId).filter((r) => r.checked === 1)).toHaveLength(2);
+
+    // Force a genuine regeneration rather than a hit: age the row past the TTL
+    // and script a list where the last mode item has been replaced.
+    db.prepare(
+      "UPDATE ai_cache SET created_at = datetime('now', '-31 days') WHERE feature = 'packing'",
+    ).run();
+    useFakeProviders({ defaultPayload: modelPayload("bike", true) });
+
+    const second = await pack(token, SPITI);
+    expect(second.body.cached).toBe(false);
+
+    const after = rowsFor(tripId);
+    expect(after, "total must stay exact after a prune").toHaveLength(ITEM_COUNT);
+    // The survivor keeps its tick; the dropped item's row is gone entirely.
+    expect(after.find((r) => r.item_key === survivor)?.checked).toBe(1);
+    expect(after.find((r) => r.item_key === doomed)).toBeUndefined();
+    expect(second.body.trip.checkedCount).toBe(1);
+    expect(keys).toHaveLength(ITEM_COUNT);
+  });
+});
