@@ -113,12 +113,20 @@ tripsRouter.get("/api/trips", (req: AuthedRequest, res) => {
                       COUNT(*)      AS total,
                       SUM(checked)  AS checked
                  FROM trip_packing
+                -- Correlated to this caller. Without the WHERE, SQLite
+                -- materialises the aggregate over *every* user's rows on every
+                -- request (confirmed with EXPLAIN QUERY PLAN: MATERIALIZE p,
+                -- then a full SCAN of trip_packing). One account generating
+                -- lists at the route's own rate limit adds ~1,400 rows an hour,
+                -- and every other user's profile page would pay for that scan
+                -- synchronously on better-sqlite3's single thread.
+                WHERE trip_id IN (SELECT id FROM trips WHERE user_id = ?)
                 GROUP BY trip_id
               ) p ON p.trip_id = t.id
         WHERE t.user_id = ?
         ORDER BY t.start DESC`,
     )
-    .all(req.userId);
+    .all(req.userId, req.userId);
   res.json({ trips });
 });
 
