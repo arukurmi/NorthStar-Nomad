@@ -3,6 +3,8 @@ import type {
   AiErrorCode,
   AiKeyPublic,
   KeysResponse,
+  PackingRequest,
+  PackingResponse,
   ProviderId,
   SaveKeyResponse,
   UsageResponse,
@@ -99,6 +101,7 @@ export interface AiClient {
   deleteKey(provider: ProviderId): Promise<void>;
   setPreferred(provider: ProviderId): Promise<AiKeyPublic[]>;
   usage(): Promise<UsageResponse>;
+  generatePacking(input: PackingRequest): Promise<PackingResponse>;
 }
 
 /**
@@ -167,6 +170,23 @@ export function createAiClient(authFetch: AuthState["authFetch"]): AiClient {
     async usage() {
       try {
         return await authFetch<UsageResponse>("/api/ai/usage");
+      } catch (err) {
+        throw toAiError(err);
+      }
+    },
+
+    async generatePacking(input) {
+      try {
+        // signOutOn401: false, for the same reason saveKey passes it. This
+        // route answers 401 for `invalid_key` — a provider that rejected the
+        // stored credential — as well as for a dead session. Letting the
+        // default fire would sign someone out of Northstar Nomad because they
+        // revoked an Anthropic key, which is absurd and very hard to diagnose.
+        return await authFetch<PackingResponse>(
+          "/api/ai/packing",
+          { method: "POST", body: JSON.stringify(input) },
+          { signOutOn401: false },
+        );
       } catch (err) {
         throw toAiError(err);
       }
