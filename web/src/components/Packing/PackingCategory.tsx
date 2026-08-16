@@ -5,6 +5,8 @@ import type { PackingItem } from "../../lib/types";
 interface PackingCategoryProps {
   name: string;
   modeCategory: boolean;
+  /** Whether this section starts expanded. Decided by the panel, not here. */
+  defaultOpen: boolean;
   items: PackingItem[];
   checked: Record<string, boolean>;
   tickable: boolean;
@@ -20,18 +22,24 @@ interface PackingCategoryProps {
  * Which section that is comes from the server's `modeCategory` flag rather than
  * from matching a heading string in the client. The heading is model-authored
  * text; matching on it here would silently stop working the day the wording
- * drifts, and the symptom would be "nothing is expanded", which nobody reports.
+ * drifts.
+ *
+ * `defaultOpen` is decided by the panel rather than read off `modeCategory`
+ * directly, because the parser permits *zero* matches when the model ignored
+ * the dictated heading — and every section starting collapsed is a wall of
+ * headers with no items visible at all.
  */
 export function PackingCategory({
   name,
   modeCategory,
+  defaultOpen,
   items,
   checked,
   tickable,
   pending,
   onToggle,
 }: PackingCategoryProps) {
-  const [open, setOpen] = useState(modeCategory);
+  const [open, setOpen] = useState(defaultOpen);
   const done = items.filter((item) => checked[item.itemKey]).length;
 
   return (
@@ -44,6 +52,7 @@ export function PackingCategory({
         type="button"
         onClick={() => setOpen((was) => !was)}
         aria-expanded={open}
+        aria-controls={`packing-${name}`}
         className="flex min-h-[48px] w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-raise/40"
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -68,7 +77,7 @@ export function PackingCategory({
         </span>
       </button>
       {open && (
-        <ul className="animate-fade-up px-1.5 pb-2">
+        <ul id={`packing-${name}`} className="animate-fade-up px-1.5 pb-2">
           {items.map((item) => (
             <PackingItemRow
               key={item.itemKey}

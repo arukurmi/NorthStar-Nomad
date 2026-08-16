@@ -113,16 +113,20 @@ export function DestinationDetail({
         <DestinationTabs value={tab} onChange={setTab} />
       </div>
 
-      {tab === "pack" ? (
-        <div className="mt-6">
-          <PackPanel
-            destinationId={id}
-            destinationName={dest.name}
-            range={range}
-            mode={mode}
-          />
-        </div>
-      ) : (
+      {/* Hidden rather than unmounted. Unmounting resets usePacking to `idle`,
+          so glancing at Overview and coming back would throw away a generated
+          list and cost the user another round trip and one of their thirty
+          hourly slots for an answer they had already been shown. */}
+      <div className={tab === "pack" ? "mt-6" : "hidden"}>
+        <PackPanel
+          destinationId={id}
+          destinationName={dest.name}
+          range={range}
+          mode={mode}
+        />
+      </div>
+
+      {tab === "overview" && (
         <>
       <p className="mt-3 text-starlight/85">{dest.blurb}</p>
       <p className="mt-2 text-sm text-muted">

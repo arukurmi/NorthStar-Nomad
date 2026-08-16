@@ -88,6 +88,7 @@ export function PackPanel({
           how long you're going, and the fact you're travelling by {mode}.
         </p>
         <button
+          type="button"
           onClick={generate}
           className="mt-4 rounded-full bg-marigold px-4 py-1.5 text-sm font-bold text-ink transition hover:brightness-110"
         >
@@ -100,6 +101,11 @@ export function PackPanel({
   const { packing, trip, cached, generatedAt } = state;
   const tickable = trip !== null;
   const checked = trip?.checked ?? {};
+  // The parser allows zero mode-category matches when the model ignored the
+  // dictated heading, so falling back to the first section keeps something
+  // open. Every section collapsed is a wall of headers with nothing in it.
+  const modeIndex = packing.categories.findIndex((c) => c.modeCategory);
+  const openIndex = modeIndex === -1 ? 0 : modeIndex;
 
   return (
     <div className="animate-fade-up space-y-3">
@@ -119,11 +125,12 @@ export function PackPanel({
         </p>
       )}
 
-      {packing.categories.map((category) => (
+      {packing.categories.map((category, index) => (
         <PackingCategory
           key={category.name}
           name={category.name}
           modeCategory={category.modeCategory}
+          defaultOpen={index === openIndex}
           items={category.items}
           checked={checked}
           tickable={tickable}
@@ -142,6 +149,7 @@ export function PackPanel({
             : "Generated just now · billed to your provider"}
         </p>
         <button
+          type="button"
           onClick={generate}
           className="rounded-full bg-raise px-3 py-1.5 font-numeric text-xs text-muted transition hover:text-starlight"
         >
