@@ -164,6 +164,13 @@ Two canary tests hold this up: a POST carrying marker strings in extra body
 fields must produce a prompt containing neither, and a stored payload containing
 neither.
 
+**Stated precisely, because the looser version would be wrong:** `start` and
+`end` *are* caller-supplied strings and they *do* reach the prompt. They are
+safe because they are pinned to `\d{4}-\d{2}-\d{2}`, ISO round-tripped, span
+bounded and epoch bounded before they get there — not because they are absent.
+The claim is "there is no free-text field", which is true; "no user input
+reaches the prompt" would not be.
+
 **The rule this establishes for F1, F3 and F4:** a feature may write to
 `ai_cache` only while every prompt input comes from our catalogue. The first
 feature that wants free-text steering — "make it lighter", "we have a toddler" —
@@ -236,7 +243,24 @@ treated as a miss and regenerated rather than being served with our UI's trust �
 checkboxes, item keys and all — attached to it. It does not make the row
 trustworthy; it bounds what an untrustworthy row can be.
 
-### 5.6 What F2 did *not* close: the eviction budget is shared
+### 5.6 The cache is a cross-user activity oracle, at a price
+
+A user's *first* request for a tuple answering `cached: true`, with a
+`generatedAt` older than that request, discloses that **some** other account has
+already generated exactly that `(destination, start, end, mode, provider,
+model)`, and roughly when.
+
+No identity crosses: the answer is "somebody planned Spiti 12–18 March by bike",
+never who. And probing is not free — a negative probe bills the prober a real
+completion and writes the row it was testing for, so enumeration costs money and
+destroys its own evidence.
+
+**Accepted and disclosed here** rather than mitigated, because the two obvious
+mitigations both cost more than the leak: hiding `cached` removes the honesty
+that §5.3 exists for, and per-user first-seen tracking reintroduces the user
+identity that keeping this table global was meant to avoid.
+
+### 5.7 What F2 did *not* close: the eviction budget is shared
 
 The 2000-row bound is **per feature, not per user**. One authenticated user
 issuing 2000 distinct requests evicts everyone else's packing rows and makes
@@ -327,7 +351,10 @@ oversight.
 | 4 | Global `ai_cache` serves one user's answer to another | **Bounded** — settled by F2 in §5. Prompt inputs are catalogue-only and structurally enforced, `provider` is in the key, hits are re-validated, TTL is 30 days |
 | 4a | One user's requests can evict every other user's cached rows | Accepted — §5.6. Costs the attacker 2000 paid completions; rate-bounded per account but registration is unthrottled |
 | 9 | A feature route can burn a victim's provider credit through F2 | Bounded — 30 generations/hour/account, checked before the key is decrypted. Not a spend cap |
-| 10 | `NOMAD_AI_FAKE` on a deployed host would serve fabricated answers from the shared cache | Closed — the process refuses to boot, same rule as the master key |
+| 10 | `NOMAD_AI_FAKE` on a deployed host would serve fabricated answers from the shared cache | Closed — the process refuses to boot unless `NODE_ENV` explicitly says test or development, and never on a platform-marked host. Fails **closed** on an unrecognised host |
+| 11 | The shared cache discloses that *someone* has planned a given trip tuple | Accepted — §5.6. No identity crosses; probing costs a paid completion and self-poisons the row |
+| 12 | `trips` has no UNIQUE constraint, so concurrent creates leave duplicates | Accepted for F2 — pre-existing, and adding the index would fail at boot on any database that already holds duplicates. `packingStore` resolves deterministically to the lowest id |
+| 13 | The tick endpoints are unthrottled | Accepted — each call is one small write plus a re-read, scoped to the caller's own trip, and the generation route in front of them is limited |
 | 5 | Key-save throttle is per-account and per-process only | Accepted — raises cost, does not eliminate the oracle |
 | 6 | Deleting a key here does not revoke it upstream | Accepted; UI copy gap is an open action (§7) |
 | 7 | Non-production data is encrypted under a public key | Accepted by design; deployed hosts refuse it |
