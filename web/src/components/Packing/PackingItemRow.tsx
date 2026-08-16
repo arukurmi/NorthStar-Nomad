@@ -33,7 +33,7 @@ export function PackingItemRow({
   onToggle,
 }: PackingItemRowProps) {
   return (
-    <li>
+    <li aria-busy={pending || undefined}>
       <label
         className={`flex min-h-[44px] w-full cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 transition ${
           tickable ? "hover:bg-raise/60" : "cursor-default"
@@ -42,7 +42,14 @@ export function PackingItemRow({
         <input
           type="checkbox"
           checked={checked}
-          disabled={!tickable || pending}
+          // Deliberately NOT disabled while a tick is in flight. Every browser
+          // blurs a focused input the moment it becomes disabled, so a keyboard
+          // user pressing Space would lose their place in the list on every
+          // single item and have to Tab back in — on the eight-items-in-ten-
+          // seconds interaction this feature is for, that is the interaction
+          // failing. The in-flight set already rejects the duplicate click, and
+          // the row's opacity already shows the state.
+          disabled={!tickable}
           onChange={(e) => onToggle(itemKey, e.target.checked)}
           className="mt-0.5 h-5 w-5 shrink-0 accent-marigold"
         />
@@ -58,7 +65,7 @@ export function PackingItemRow({
             {/* Only shown above one: "1 ×" on every row is noise that makes
                 the rows that genuinely scale harder to spot. */}
             {qty > 1 && (
-              <span className="shrink-0 rounded-full bg-raise px-2 py-0.5 font-numeric text-[11px] font-bold text-marigold">
+              <span className="shrink-0 rounded-full bg-raise px-2 py-0.5 font-numeric text-xs font-bold text-marigold">
                 {qty} ×
               </span>
             )}
