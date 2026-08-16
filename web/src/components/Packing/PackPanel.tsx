@@ -13,6 +13,8 @@ interface PackPanelProps {
   destinationName: string;
   range: { start: string; end: string };
   mode: TravelMode;
+  /** When the caller already knows the saved trip, the panel restores for free. */
+  tripId?: number;
 }
 
 /** "just now" / "3 days ago" — enough for "is this stale?", nothing more. */
@@ -37,13 +39,15 @@ export function PackPanel({
   destinationName,
   range,
   mode,
+  tripId,
 }: PackPanelProps) {
   const { user } = useAuth();
-  const { state, generate, toggle, pending, tickError } = usePacking({
+  const { state, generate, toggle, pending, tickError, restoring } = usePacking({
     destinationId,
     start: range.start,
     end: range.end,
     mode,
+    tripId,
   });
 
   if (!user) {
@@ -75,7 +79,10 @@ export function PackPanel({
     );
   }
 
-  if (state.status === "generating") return <PackingSkeleton />;
+  // The free restore looks the same as a generation while it runs, which is
+  // honest — both end in a list — and it stops the idle CTA flashing on screen
+  // for the moment before a saved list loads.
+  if (state.status === "generating" || restoring) return <PackingSkeleton />;
 
   if (state.status === "idle") {
     return (

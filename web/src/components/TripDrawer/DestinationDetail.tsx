@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchDestination } from "../../lib/api";
 import type { Destination, TravelMode } from "../../lib/types";
-import { useAuth } from "../../lib/auth";
+import { useAuth, type Trip } from "../../lib/auth";
 import { DestinationTabs, type DestinationTab } from "./DestinationTabs";
 import { PackPanel } from "../Packing/PackPanel";
 
@@ -38,6 +38,7 @@ export function DestinationDetail({
     "idle" | "saving" | "saved" | "declined" | "duplicate"
   >("idle");
   const [tab, setTab] = useState<DestinationTab>("overview");
+  const [tripId, setTripId] = useState<number | undefined>();
 
   const planTrip = async () => {
     setPlanState("saving");
@@ -52,12 +53,41 @@ export function DestinationDetail({
         }),
       });
       setPlanState("saved");
+      // Newly saved: the Pack tab can now offer ticking without a reload.
+      void findSavedTrip();
     } catch (e) {
       setPlanState(
         (e as Error).message.includes("already") ? "duplicate" : "idle",
       );
     }
   };
+
+  /**
+   * The saved trip for exactly these dates, if there is one. It lets the Pack
+   * tab restore a stored checklist for free instead of showing an idle panel
+   * that invites the user to buy the list again.
+   */
+  const findSavedTrip = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { trips } = await authFetch<{ trips: Trip[] }>("/api/trips");
+      const match = trips.find(
+        (t) =>
+          t.destination_id === id &&
+          t.start === range.start &&
+          t.end === range.end &&
+          t.mode === mode,
+      );
+      setTripId(match?.id);
+    } catch {
+      // Opportunistic: without it the panel still works, it just cannot tick.
+      setTripId(undefined);
+    }
+  }, [authFetch, user, id, range.start, range.end, mode]);
+
+  useEffect(() => {
+    void findSavedTrip();
+  }, [findSavedTrip]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +153,7 @@ export function DestinationDetail({
           destinationName={dest.name}
           range={range}
           mode={mode}
+          tripId={tripId}
         />
       </div>
 
